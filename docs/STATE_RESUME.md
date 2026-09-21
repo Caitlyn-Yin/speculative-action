@@ -287,3 +287,32 @@ trajectory means.
 - §6 obs-identity vs speculated text — **still open**, deliberately not decided.
 - Everything in §7 that depends on the lost gate/judge/battery definitions.
 - The two residual contamination channels above.
+
+---
+
+## 11. R0 (push to origin) — FAILED, 2026-09-21
+
+**`origin` is unchanged: `HEAD` and `refs/heads/main`, both `dc938b9ef747…`. No branch, no tag.**
+
+```
+$ git push -u origin phase2-fixed-scaleup
+failed to create root command: failed to read configuration:
+    open /home/hyin66/.config/gh/config.yml: not a directory
+remote: No anonymous write access.
+fatal: Authentication failed for 'https://github.com/Caitlyn-Yin/speculative-action.git/'
+EXIT=128
+```
+
+Identical failure for `git push origin trackP-complete-2026-09-21`.
+
+**Cause.** `~/.gitconfig` delegates GitHub auth to `gh`:
+`credential.https://github.com.helper=!/home/hyin66/bin/gh auth git-credential`.
+`gh` cannot start because **`$HOME/.config` is a root-owned regular file** (`-r-------- root:root`,
+2903 bytes), so `~/.config/gh/config.yml` resolves through a file. No sudo ⇒ cannot be repaired here.
+Same root cause as the vLLM XDG crash in §10. No `GITHUB_TOKEN`/`GH_TOKEN`, no `~/.git-credentials`,
+no `gh` config elsewhere, `/run/secrets` empty.
+
+**Tag `trackP-complete-2026-09-21` (`ebe9979`) exists locally only**, ready to push.
+
+**Per WAYS_OF_WORKING §1, Track P is therefore NOT complete** — the commits are not durable.
+The off-node transfer is blocked pending a destination from the PI.
