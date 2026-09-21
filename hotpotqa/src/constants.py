@@ -15,6 +15,11 @@ spec_base_url = "http://127.0.0.1:8001/v1"
 actor_model_name = "Qwen/Qwen3-8B"
 spec_model_name = "Qwen/Qwen3-0.6B"
 
+# Speculation isolation. True = snapshot/restore the environment's
+# observation state around the speculative branch (correct). False = upstream
+# behaviour, i.e. the contaminated "spec-unisolated" arm of the online gate.
+isolate_speculation = True
+
 local_api_key = "EMPTY"          # vLLM ignores the value, the SDK requires one
 local_seed = 0                   # forwarded to vLLM for reproducibility
 local_request_timeout = 600

@@ -57,12 +57,44 @@ class HotPotQARun:
             log_path = join(self.base_traj_path, str(self.current_index), "log.txt")
             Utils.append_file(text, log_path)
 
+    # Environment observation state that a speculative step may clobber.
+    # WikiEnv.guess_step() assigns .page and .obs unconditionally, even under
+    # simulate=True (environment.py:94-97), and the speculative branch runs
+    # against the same env object as the realized trajectory -- so without a
+    # snapshot the speculation leaks into the next realized lookup[], which
+    # reads .page via construct_lookup_list() (environment.py:64-73).
+    _SPEC_ISOLATED_FIELDS = (
+        "page", "obs", "sim_obs", "lookup_keyword", "lookup_list", "lookup_cnt",
+    )
+
+    @classmethod
+    def _snapshot_env(cls, env):
+        base = env.unwrapped
+        snap = {}
+        for field in cls._SPEC_ISOLATED_FIELDS:
+            value = getattr(base, field, None)
+            snap[field] = list(value) if isinstance(value, list) else value
+        return snap
+
+    @classmethod
+    def _restore_env(cls, env, snap):
+        base = env.unwrapped
+        for field in cls._SPEC_ISOLATED_FIELDS:
+            setattr(base, field, snap[field])
+
     def step(self, env, action, simulate=False):
         if simulate:
+            isolate = constants.isolate_speculation
+            snapshot = self._snapshot_env(env) if isolate else None
             start = time.perf_counter()
             obs, r, done, info = env.step(action, step_type="simulate")
             end = time.perf_counter()
-            return env.sim_obs, r, done, info, end - start
+            # Capture the speculated observation before restoring, since
+            # sim_obs is itself part of the snapshotted state.
+            sim_obs = env.unwrapped.sim_obs
+            if isolate:
+                self._restore_env(env, snapshot)
+            return sim_obs, r, done, info, end - start
 
         attempts = 0
         while attempts < 10:
