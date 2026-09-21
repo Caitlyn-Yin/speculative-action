@@ -18,11 +18,12 @@ max_agent_retries = 1
 max_guess_retries = 3
 
 # Agent LLM settings
+# Greedy precondition for bit-identity: ACTOR_TEMP = SPEC_TEMP = 0 everywhere.
 max_output_tokens = 1000
 top_p = 1
-temperature = 1
+temperature = 0
 
 # Guess LLM settings
 max_guess_output_tokens = 100
-guess_top_p = 0.9
-guess_temperature = 0.1
+guess_top_p = 1
+guess_temperature = 0
