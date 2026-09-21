@@ -22,6 +22,7 @@ class HotPotQARun:
             temperature=constants.temperature,
             max_tokens=constants.max_output_tokens,
             top_p=constants.top_p,
+            base_url=constants.actor_base_url,
         )
         self.model_name = model_name
         self.guess_model_name = guess_model_name
@@ -226,7 +227,17 @@ class HotPotQARun:
         return info
 
     def run(self, webthink_simulate=False, skip_done=False):
-        from google.genai.errors import ClientError, ServerError
+        # Optional import: google-genai is only needed for the external
+        # backend. Under the local vLLM backend the package is absent, so
+        # fall back to placeholder types that can never be raised.
+        try:
+            from google.genai.errors import ClientError, ServerError
+        except ImportError:
+            class ClientError(Exception):
+                pass
+
+            class ServerError(Exception):
+                pass
 
         idxs = list(range(constants.num))
         random.Random(constants.random_seed).shuffle(idxs)

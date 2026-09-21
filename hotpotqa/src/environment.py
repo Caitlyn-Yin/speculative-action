@@ -39,6 +39,7 @@ class WikiEnv(gym.Env):
             temperature=constants.guess_temperature,
             max_tokens=constants.max_guess_output_tokens,
             top_p=constants.guess_top_p,
+            base_url=constants.spec_base_url,
         )
 
     def _get_obs(self):
