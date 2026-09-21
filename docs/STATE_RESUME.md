@@ -3,6 +3,10 @@
 **Node:** `hyin66-agent-0` · 1× H200 NVL 143 GB · no SLURM · repo at `/home/hyin66/speculative-action`
 **Branch:** `phase2-fixed-scaleup` (from `main` @ `dc938b9`)
 
+> **Update 2026-09-21 (Track S / Track P).** Track S (salvage) **FAILED — the STOP condition in S4
+> fired**; see §9. Track P (docs-independent prep) is **COMPLETE, 6/6**; see §10. Sections 0–8 below
+> are the original reconstruction and remain accurate, with two corrections noted inline in §10.
+
 ---
 
 ## 0. Reconstruction basis — the docs did NOT survive
@@ -180,3 +184,106 @@ this. **I will not re-decide it unilaterally.**
    section says I must ask about first.
 3. No SLURM and a single H200: the two-server split (actor :8000 + speculator :8001 with `GPU_FRAC`)
    is still feasible on 143 GB, but everything runs foreground; three-arm gates are sequential.
+   *(Resolved 2026-09-21 — the split is no longer hypothetical, it is measured: §10 / P6.)*
+
+---
+
+## 9. Salvage attempt 2 — FAILED (S4 STOP condition fired)
+
+**Outcome: no bundle, no checksums, nothing transferred. S1–S3 and S5 were never executable.**
+
+Per S4 this is recorded as the failure mode, and **no semantics were re-derived**: `gates.py`, the
+judge, `rescore`, `JUDGE_CONTRACT`, `AUDIT_PROTOCOL` and the Step 2 gate definition remain untouched.
+
+**Failure mode: the GH200 host is not reachable from this pod — there is no network path to attempt.**
+S1 presupposes a shell on the GH200; S2 presupposes `scp`/`rsync` *from* it. Neither is available.
+Checked again on 2026-09-21 (third independent check, same result):
+
+| Probe | Result |
+|---|---|
+| `/projects/bhll/hyin6/code/speculative-action` | does not exist |
+| `/projects`, `/project`, `/proj`, `/mnt/projects`, `/scratch`, `/work`, `/gpfs`, `/lustre`, `/nfs`, `/data` | none exist |
+| non-virtual mounts | container overlay, `/home/hyin66` (JuiceFS rw), `/models` (JuiceFS **ro**), pod binds off `/dev/md0p1` — nothing from that cluster |
+| private keys under `$HOME` | **none** (`~/.ssh/` holds only `authorized_keys`, `config`, `known_hosts`) |
+| `SSH_AUTH_SOCK` / `ssh-add -l` | unset / "Could not open a connection to your authentication agent" |
+| `~/.ssh/config` host aliases | only `worker-*` and `*.efabric-workspace.svc.cluster.local` (in-cluster EFabric peers, not a login node) |
+| `known_hosts` | one hashed entry |
+| SLURM (`sacct`, `sbatch`, `squeue`, `sinfo`) | absent — job **2652592 / 2662459** accounting is unreachable |
+| VPN / transport clients | `ssh`, `rsync`, `scp` present but with nothing to authenticate; no `sshfs`, `globus`, `openvpn`, `tailscale` |
+| `gh auth status` | fails — `$HOME/.config` is a root-owned *file*, so `gh` cannot read its config |
+| bundle/tarball delivered by other means | none — no `*.bundle`/`*.tgz` anywhere, nothing new in `$HOME` since 2026-09-20 |
+| `git ls-remote origin` | still only `HEAD` + `refs/heads/main`, both `dc938b9ef747…` |
+
+**Checksums: none to record.** No artifact was produced or received, so there is nothing to verify.
+
+**What exists instead:** `/home/hyin66/salvage_speculative_action.sh` (written 2026-09-20, ~9 KB,
+**never executed anywhere**) implements S1-style collection plus commit/tag/push with a
+bundle+tarball fallback. It is untested. To salvage, it must be run **on the GH200**, by a human with
+a shell there.
+
+**Per S4: switch to full rebuild next session** unless a route to the GH200 appears. Concretely, the
+next session needs one of: (a) an SSH alias + key for the GH200, (b) someone running that script
+there and attaching the outputs, or (c) an explicit go-ahead to re-derive the lost semantics — which
+is a rewrite, and re-decides the judge contract and audit protocol.
+
+---
+
+## 10. Track P — prep independent of the lost docs: COMPLETE (6/6)
+
+Full environment detail in `docs/ENV_PREP.md`. One commit per item on `phase2-fixed-scaleup`.
+
+| Item | Status | Commit | Evidence |
+|---|---|---|---|
+| P1 envs | **DONE** | `e71d3ee` | pipeline py3.10.21 (gymnasium **0.29.1** pinned, numpy 1.26.4, openai 3.16.2); serving py3.12 (**vllm 0.29.0**, torch 2.13.0+cu130). `HF_HOME` on `/tmp/specmem`; ES cache untouched |
+| P2 ladder | **DONE** | `83f5173` | 56 GB, 5/5 repos, sizes + `config.json` sha256 + revisions in `ENV_PREP.md` |
+| P3 local backend | **DONE** | `7bc501d` | `backend={local,external}`, per-role `base_url`, lazy external SDKs, guarded `google.genai` import |
+| P4 greedy | **DONE** | `5f97df2` | `temperature 1→0`, `guess_temperature 0.1→0`, `guess_top_p 0.9→1` |
+| P5 isolation + test | **DONE** | `034dabd` | **5/5 tests pass in 0.70 s** — see below |
+| P6 serving | **DONE** | `cdd831b` | both servers up, `check_server.py --all` → **ALL GREEN** |
+
+### P5 regression test result
+
+`hotpotqa/tests/test_isolation_regression.py` — **5 passed, 0.70 s**, no network and no LLM
+(Wikipedia and the speculator are both scripted):
+
+| Test | Result | What it establishes |
+|---|---|---|
+| `test_realized_lookup_is_identical_when_isolated` | PASS | realized `lookup[]` at turn 2 is **byte-identical** with speculation on vs off |
+| `test_realized_lookup_diverges_when_unisolated` | PASS | with `isolate_speculation=False` the same comparison **diverges** — so the green above is not a blind pass |
+| `test_snapshot_restores_every_declared_field` | PASS | all of `page, obs, sim_obs, lookup_keyword, lookup_list, lookup_cnt` restored |
+| `test_unisolated_arm_clobbers_state[page]`/`[obs]` | PASS | pins exactly what upstream corrupts (`environment.py:96-97`) |
+
+This is the **offline** invariant on a scripted fixture. It is *not* the A3(ii) online gate, which
+still needs real servers, 5 questions and three arms — and which remains blocked on the lost gate
+definition.
+
+**Two residual contamination channels, found but deliberately NOT fixed** (they change
+recorded-trajectory semantics, which Track P is not permitted to touch). With isolation ON, a
+speculative step still:
+
+1. appends to `LoggingWrapper.traj` (`wrappers.py:258-264`) — measured actions/observations
+   `1/2 → 2/3` for a single speculation;
+2. increments `WikiEnv.steps` (`environment.py:165`) — measured `1 → 2`.
+
+Neither alters the realized action/observation sequence (`webthink` builds its own `running_prompt`
+and loops on its own index), so the bit-identity invariant holds — but `trajs/*.json` and
+`info["steps"]` are polluted. **Needs a ruling before Phase C**, since it affects what a captured
+trajectory means.
+
+### Corrections to §1 and §5 from Track P work
+
+- §1 said the research layer is absent. Still true — but P3/P5 mean `hotpotqa/src/` is **no longer
+  pristine upstream**: `llm_client.py`, `runner.py`, `environment.py`, `constants.py` now carry the
+  local backend, the greedy config and the isolation fix. The *research* layer (gates, judge,
+  rescore, overlays, schema 0.2.0) is still absent.
+- §2 said "the Phase A fix is absent." **Now partially present**: the minimal correctness fix landed
+  in `034dabd`. It is not the schema 0.2.0 wrapper, and upstream behaviour stays reachable via
+  `constants.isolate_speculation = False` (the gate's unisolated arm).
+- §5's config-drift table is resolved for temperature/backend rows; sample count (20 vs 25) and the
+  seed remain as inherited — untouched, because they are run-protocol parameters.
+
+### Open items carried forward (unchanged, not re-decided)
+
+- §6 obs-identity vs speculated text — **still open**, deliberately not decided.
+- Everything in §7 that depends on the lost gate/judge/battery definitions.
+- The two residual contamination channels above.
