@@ -27,3 +27,31 @@ lived, which is exactly the trap.
   get the bundle off the node, and report the blocker at the top of the response.
 - Artifacts that cannot be committed (weights, caches, trajectories) must be **reproducible from a
   committed script**, and the script must record what would be needed to rebuild them.
+
+## 3. How to push from EFabric
+
+**Push over SSH with the repo deploy key — `gh`/HTTPS can never work on this node.**
+
+```bash
+git remote set-url origin git@github.com-specmem:Caitlyn-Yin/speculative-action.git
+git push origin phase2-fixed-scaleup && git push origin --tags
+```
+
+The alias is in `~/.ssh/config` (`Host github.com-specmem` → `HostName github.com`, `User git`,
+`IdentityFile ~/.ssh/id_specmem_deploy`, `IdentitiesOnly yes`). The key is a **repository deploy
+key with write access**, not an account key, so its blast radius is this one repo. If a future pod
+blocks port 22, switch that entry to `HostName ssh.github.com` / `Port 443` — both were reachable
+on 2026-09-28.
+
+**Why not `gh`:** `$HOME` is the root of a JuiceFS mount, and JuiceFS materialises `.accesslog`,
+`.stats` and `.config` as root-owned *virtual files* at its mount root. So `~/.config` is a
+0400 root-owned **regular file** that no one can delete or convert — every mount, forever. Anything
+resolving an XDG path beneath it dies (`gh`: `open ~/.config/gh/config.yml: not a directory`;
+vLLM: `NotADirectoryError`). It is not a cron artifact and there is nothing to repair — its mtime
+just tracks pod start. `GH_CONFIG_DIR=$HOME/.gh-config` does make `gh` start, but it puts an
+account-scoped token on a shared node; the deploy key is preferred. `env.sh` redirects
+`XDG_CONFIG_HOME`/`XDG_CACHE_HOME` for the same underlying reason.
+
+`~/.ssh/config` is partly managed by EFabric (`# EFabric worker ssh aliases begin/end`). The
+github block sits outside that region and survived the 2026-09-25 pod restart, but **verify it is
+still present after any restart** before concluding that auth broke.
