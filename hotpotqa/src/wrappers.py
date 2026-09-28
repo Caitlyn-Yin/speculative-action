@@ -73,7 +73,13 @@ class HistoryWrapper(gym.Wrapper):
         return obs_dict
 
     def reset(self, seed=None, return_info=False, options=None, idx=None):
-        output = self.env.reset(seed=None, return_info=False, options=None, idx=None)
+        # Forward every argument. This used to hardcode idx=None, which meant
+        # runner.webthink(idx=i) never selected question i: HotPotQAWrapper.reset
+        # fell through to np.random.randint(len(self.data)) and drew a random
+        # question on every reset. Any run keyed to a fixed index -- the seeded
+        # shuffle in runner.run(), and the fixed-idx arms of the isolation gate --
+        # was silently running something else.
+        output = self.env.reset(seed=seed, return_info=return_info, options=options, idx=idx)
         self.normal_trajectory_dict = self.get_empty_traj_dict()
         self.sim_trajectory_dict = self.get_empty_traj_dict()
         return output

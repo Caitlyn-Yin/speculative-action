@@ -1,3 +1,5 @@
+import hashlib
+import os
 import time
 import gymnasium as gym
 import requests
@@ -10,6 +12,64 @@ from .llm_client import LLMClient
 
 def clean_str(p):
     return p.encode().decode("unicode-escape").encode("latin1").decode("utf-8")
+
+
+# --------------------------------------------------------------------------
+# Wikipedia response cache -- off by default, enabled with WIKI_CACHE=1.
+#
+# The 3-arm isolation gate compares realized trajectories across arms that run
+# minutes apart. Wikipedia is live: an edit between two arms would surface as a
+# trajectory divergence that has nothing to do with speculation isolation. The
+# cache pins the corpus so the only thing varying across arms is the thing
+# under test. WIKI_CACHE_STATS lets the gate assert that every arm after the
+# first is a pure cache hit -- a nonzero miss count means the comparison is
+# confounded and the result must not be reported.
+#
+# Keyed by full search URL. Persisted under WIKI_CACHE_DIR so the gate is
+# re-runnable across processes.
+# --------------------------------------------------------------------------
+WIKI_CACHE_ENABLED = os.environ.get("WIKI_CACHE", "0") == "1"
+WIKI_CACHE_DIR = os.environ.get("WIKI_CACHE_DIR", "/tmp/specmem/wiki_cache")
+WIKI_CACHE_STATS = {"hits": 0, "misses": 0}
+_WIKI_CACHE_MEM = {}
+
+
+def reset_wiki_cache_stats():
+    WIKI_CACHE_STATS["hits"] = 0
+    WIKI_CACHE_STATS["misses"] = 0
+
+
+def _wiki_cache_path(url):
+    return os.path.join(WIKI_CACHE_DIR, hashlib.sha256(url.encode()).hexdigest() + ".html")
+
+
+def wiki_get(url, headers):
+    """GET a Wikipedia URL, optionally through the pinned cache."""
+    if not WIKI_CACHE_ENABLED:
+        WIKI_CACHE_STATS["misses"] += 1
+        return requests.get(url, headers=headers).text
+
+    if url in _WIKI_CACHE_MEM:
+        WIKI_CACHE_STATS["hits"] += 1
+        return _WIKI_CACHE_MEM[url]
+
+    path = _wiki_cache_path(url)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        _WIKI_CACHE_MEM[url] = text
+        WIKI_CACHE_STATS["hits"] += 1
+        return text
+
+    WIKI_CACHE_STATS["misses"] += 1
+    text = requests.get(url, headers=headers).text
+    os.makedirs(WIKI_CACHE_DIR, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+    _WIKI_CACHE_MEM[url] = text
+    return text
 
 
 class TextSpace(gym.spaces.Space):
@@ -102,7 +162,7 @@ class WikiEnv(gym.Env):
         search_url = f"https://en.wikipedia.org/w/index.php?search={entity_}"
         old_time = time.time()
         requests_headers = {"User-Agent": "React/1.0"}
-        response_text = requests.get(search_url, headers=requests_headers).text
+        response_text = wiki_get(search_url, requests_headers)
         self.search_time += time.time() - old_time
         self.num_searches += 1
         soup = BeautifulSoup(response_text, features="html.parser")

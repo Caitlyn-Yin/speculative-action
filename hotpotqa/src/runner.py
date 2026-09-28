@@ -236,7 +236,17 @@ class HotPotQARun:
                 sim_obs, sim_r, sim_done, sim_info, sim_traj_time_taken = self.step(
                     self.env, self.action_lowercase(action), simulate=True
                 )
-                sim_obs = sim_obs.replace('\n', '')
+                # Only search[...] produces a speculated observation: guess_step
+                # is the sole writer of sim_obs. On a lookup[]/finish[] step there
+                # is none, and under isolation _restore_env puts sim_obs back to
+                # its pre-speculation value (None on the first such step) -- so
+                # this crashed with AttributeError. Without isolation it did not
+                # crash only because sim_obs still held a STALE observation from an
+                # earlier search, which was then recorded as if it belonged to this
+                # step. Empty string means "no speculated observation for this
+                # step"; it is a diagnostic channel and does not enter the
+                # isolation criterion, which compares realized trajectories only.
+                sim_obs = "" if sim_obs is None else sim_obs.replace('\n', '')
                 self.env.update_traj_dict_records(sim_thought, sim_actions, sim_obs, sim_traj_time_taken, True)
                 next_sim_step_string = PromptTemplates.NEXT_STEP_PROMPT.format(
                     i=i, thought=thought, action=action, obs=sim_obs
