@@ -316,3 +316,72 @@ no `gh` config elsewhere, `/run/secrets` empty.
 
 **Per WAYS_OF_WORKING §1, Track P is therefore NOT complete** — the commits are not durable.
 The off-node transfer is blocked pending a destination from the PI.
+
+> **RESOLVED 2026-09-28 — see §12.** The push blocker is gone; every commit and the tag are on
+> `origin`. Track P is now complete in the sense §1 requires.
+
+---
+
+## 12. 2026-09-28 — push unblocked, environment rebuilt, Paper B frozen
+
+### Push (Task A) — CLOSED
+
+`origin` now carries `refs/heads/phase2-fixed-scaleup` and the tag
+`trackP-complete-2026-09-21`. Route: **SSH with a repo key**, alias `github.com-specmem`
+(`~/.ssh/id_specmem_deploy`). `gh`/HTTPS was abandoned, not repaired.
+
+**Root cause of the §11 failure, now understood:** `$HOME` is the **root of a JuiceFS mount**, and
+JuiceFS materialises `.accesslog`, `.stats` and `.config` as root-owned virtual files at its mount
+root. So `~/.config` is a 0400 root-owned *regular file* on every mount, permanently — not a cron
+artifact, not repairable, and its mtime merely tracks pod start. Any XDG path beneath it fails.
+This is the same root cause as the vLLM `NotADirectoryError` in §10. Procedure in
+`WAYS_OF_WORKING.md` §3.
+
+Off-node backup: `git bundle --all`, verified, carried to the PI's laptop.
+
+### Environment (Task B) — re-materialised after a pod recycle
+
+`/tmp` was wiped by a restart between 2026-09-21 and 2026-09-28. Rebuilt from the committed
+scripts; **all five `config.json` sha256 hashes and all five snapshot revisions match the values
+pinned in `ENV_PREP.md`**, which is the first evidence `download_ladder.sh` actually reproduces the
+recorded state. `check_server.py --all` → ALL GREEN.
+
+**Version drift vs `ENV_PREP.md`:** vLLM **0.30.0** (doc: 0.29.0), openai SDK **3.19.2** (doc:
+3.16.2). gymnasium 0.29.1 and numpy 1.26.4 held at their pins.
+
+### Online 3-arm isolation gate — run; verdict INCONCLUSIVE
+
+Criterion: handoff doc §4.4, implemented verbatim in `scripts/run_invariant.py`. Full result in
+`docs/INVARIANT_REPORT.md`. The INCONCLUSIVE verdict is driven by the criterion's literal
+cache-miss rule, **not** by an isolation defect; §6 of that report documents two wording problems
+(the cache rule is circular against the power check; nondeterminism does not cascade to later
+steps) and applies neither. **Two open rulings for the PI.**
+
+The gate's power is carried by idx 1267, which is fully deterministic: UNISO reproduces the
+documented contamination (`Lookup[father]` → `No more results.`) and ISO does not.
+
+### Three harness defects found and fixed
+
+1. `HistoryWrapper.reset` accepted `idx` and passed `idx=None` downward → `HotPotQAWrapper` drew a
+   **random** question every reset. Fixed-index runs were impossible, and `runner.run()` never ran
+   the seeded shuffle it computes — **`run_metrics/` was collected over random draws.** Regression
+   test added (`tests/test_fixed_idx_regression.py`).
+2. `runner.webthink` crashed on the isolated arm at any non-`search[]` step (`sim_obs` is `None`);
+   the unisolated arm survived only by recording a **stale** observation from an earlier search.
+   Now `""`. **Changes `simobs.json` semantics for non-search steps — needs a ruling before Phase C.**
+3. No Wikipedia cache existed. Added `environment.wiki_get` behind `WIKI_CACHE=1` with hit/miss
+   counters.
+
+### Paper B pre-registration — FROZEN
+
+`docs/PREREG_PAPER_B.md`, commit **`7732590b129ed059f631fde2ee6f45fee8fd910d`**, frozen before any
+Paper B data collection. Amendments append to that file's `## Amendments` section as new commits;
+the file is never rewritten.
+
+### Open rulings carried forward
+
+- §6 obs-identity vs speculated text (unchanged, still not decided).
+- Judge contract source — recovered vs rewritten (unchanged).
+- **New:** the two §4.4 criterion wordings (`INVARIANT_REPORT.md` §6).
+- **New:** `sim_obs` semantics for non-search steps.
+- The two residual contamination channels from §10.
