@@ -55,3 +55,8 @@ account-scoped token on a shared node; the deploy key is preferred. `env.sh` red
 `~/.ssh/config` is partly managed by EFabric (`# EFabric worker ssh aliases begin/end`). The
 github block sits outside that region and survived the 2026-09-25 pod restart, but **verify it is
 still present after any restart** before concluding that auth broke.
+
+**After any pod restart, run `ssh -T git@github.com-specmem` before assuming anything about git.**
+Expect `Hi Caitlyn-Yin/speculative-action!` (deploy key). A bare `Hi Caitlyn-Yin!` means the key is
+registered account-wide rather than as a repo deploy key — it pushes fine, but with a much larger
+blast radius than intended.
