@@ -168,9 +168,20 @@ def main():
     ap.add_argument("--n-questions", type=int, default=5)
     ap.add_argument("--out", default=os.path.join(REPO, "docs", "INVARIANT_REPORT.md"))
     ap.add_argument("--artifacts", default="/tmp/specmem/invariant")
+    ap.add_argument("--retrieval-backend", default=None,
+                    choices=["live", "title_exact", "bm25"],
+                    help="override constants.retrieval_backend for this run")
     args = ap.parse_args()
 
-    if os.environ.get("WIKI_CACHE") != "1":
+    if args.retrieval_backend:
+        constants.retrieval_backend = args.retrieval_backend
+
+    # Handoff 4.4 requires WIKI_CACHE=1 so that Wikipedia cannot change between
+    # arms. A frozen local corpus satisfies that requirement by construction and
+    # more strongly -- there is no HTTP request to cache, and the cache counters
+    # stay at 0/0, which the verdict's miss rule reads as clean. The guard is
+    # therefore scoped to the live backend rather than dropped.
+    if constants.retrieval_backend == "live" and os.environ.get("WIKI_CACHE") != "1":
         sys.exit("refusing to run: WIKI_CACHE=1 is required (handoff 4.4)")
 
     os.makedirs(args.artifacts, exist_ok=True)
@@ -299,7 +310,11 @@ def build_report(idxs, arms, args):
              f"actor `{constants.actor_model_name}` · spec `{constants.spec_model_name}` · "
              f"temp {constants.temperature}/{constants.guess_temperature} · "
              f"top_p {constants.top_p}/{constants.guess_top_p} · "
-             f"k={constants.guess_num_actions} · WIKI_CACHE=1\n")
+             f"k={constants.guess_num_actions} · "
+             f"retrieval_backend `{constants.retrieval_backend}`"
+             + (" · WIKI_CACHE=1\n" if constants.retrieval_backend == "live"
+                else " (frozen corpus; no HTTP, so the cache counters are 0/0 "
+                     "and cannot confound the comparison)\n"))
     L.append("Criterion is the handoff doc §4.4, implemented verbatim in "
              "`scripts/run_invariant.py`. The compared object is the **realized** "
              "trajectory only — `(real_action, real_obs)` per step, plus `n_steps` "

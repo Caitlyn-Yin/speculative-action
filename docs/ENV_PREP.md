@@ -84,3 +84,74 @@ reachability, no `<think>`, determinism.)
    Fixed by prepending `$VLLM_ENV/lib` to `LD_LIBRARY_PATH` for `$VLLM_PY`.
 
 Also: vLLM 0.29 renamed `--disable-log-requests` → `--no-enable-log-requests`.
+
+---
+
+## Frozen local Wikipedia (added 2026-09-29)
+
+Full design, fidelity measurement and deviations: **`docs/LOCAL_WIKI.md`**. Paths only, here,
+because this file is the environment record.
+
+Persistent storage, `$HOME` / JuiceFS — survives a pod recycle, 7.6 GiB:
+
+```
+$WIKI_DATA_ROOT = $HOME/specmem-data/local_wiki
+$WIKI_DATA_DIR  = $WIKI_DATA_ROOT/kilt_20190801
+    pages.zst  5.14 GiB   pages.sqlite  639 MiB   leads.jsonl.zst  537 MiB
+    bm25/      1.30 GiB   MANIFEST.json
+$WIKI_DATA_ROOT/aux
+    hotpot_dev_distractor.parquet     27 MB, gold supporting facts
+    fidelity_live_cache/              318 pinned live responses
+```
+
+Scratch, container overlay — wiped by a recycle, re-downloadable in ~13 min:
+
+```
+$WIKI_RAW_DIR = /tmp/kilt_raw
+    kilt_knowledgesource.json   34.76 GiB   build/   (staging; see LOCAL_WIKI.md §4)
+```
+
+Source of record, all three also in `MANIFEST.json`:
+
+| | |
+|---|---|
+| URL | `http://dl.fbaipublicfiles.com/KILT/kilt_knowledgesource.json` |
+| size | 37,318,876,722 B |
+| md5 | `d1dca62aa6ba889d2e842182e3114af5` (matches the publisher's S3 metadata) |
+| sha256 | `f966d6f09c4ff91656db5c56c384f136b0c495c7083c043586b8cb1033c389a5` |
+| pages | 5,903,530 |
+
+Rebuild (idempotent; a stage marked complete in `MANIFEST.json` is skipped):
+
+```bash
+source scripts/env.sh
+$PIPELINE_PY -m pip install zstandard bm25s PyStemmer pyarrow
+$PIPELINE_PY scripts/build_local_wiki.py --stage all      # ~27 min total
+```
+
+**Extra pipeline-env dependencies** beyond `setup_envs.sh`: `zstandard` 0.25.0,
+`bm25s` 0.3.11, `PyStemmer`, `pyarrow`.
+
+### Trap 4 — `$HOME/.config` is a JuiceFS mount-root artifact
+
+Trap 1 above is now understood rather than merely worked around: `$HOME` is the **root of a
+JuiceFS mount**, and JuiceFS materialises `.accesslog`, `.stats` and `.config` as root-owned
+virtual files there on every mount. `~/.config` is a 0400 root-owned regular file
+permanently, on every pod. Not repairable, not a cron artifact. (Recorded in
+`STATE_RESUME.md` §12; repeated here because this is the environment file.)
+
+### Trap 5 — `import sqlite3` in the *pipeline* env, order-dependently
+
+Same family as trap 3, opposite env. `_sqlite3` in the pipeline env pulls
+`libicui18n.so.78`, which needs `CXXABI_1.3.15` that the system `libstdc++` lacks:
+
+```
+ImportError: /lib/x86_64-linux-gnu/libstdc++.so.6: version `CXXABI_1.3.15' not found
+             (required by .../envs/pipeline/lib/python3.10/lib-dynload/../.././libicui18n.so.78)
+```
+
+It only fires when something else has already loaded the system `libstdc++`, so it is
+**order dependent**: `pytest tests/test_local_wiki.py` passed while `pytest tests/` failed
+on the same tree. `scripts/env.sh` now prepends the pipeline env's `lib` to
+`LD_LIBRARY_PATH` globally. Harmless for `$VLLM_PY`, which prepends its own `lib` ahead of
+it.

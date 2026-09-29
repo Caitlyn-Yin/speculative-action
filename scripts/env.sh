@@ -25,6 +25,15 @@ export VLLM_PY="$VLLM_ENV/bin/python"
 # Prepend the env's lib for anything run with $VLLM_PY.
 export VLLM_LD_LIBRARY_PATH="$VLLM_ENV/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
+# Trap 5 (same root cause, pipeline side). `import sqlite3` in the pipeline env
+# resolves `_sqlite3` -> libicui18n.so.78 -> CXXABI_1.3.15, which the system
+# libstdc++ does not provide. It only fails when something else has already
+# pulled in the system libstdc++ first, which makes it *order dependent*:
+# `pytest tests/test_local_wiki.py` passed while `pytest tests/` failed. Putting
+# the env's lib on the global search path removes the ordering dependence.
+# Harmless for the serving env, whose own lib dir is prepended ahead of this.
+export LD_LIBRARY_PATH="$SPEC_BASE/envs/pipeline/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
 export ACTOR_MODEL="${ACTOR_MODEL:-Qwen/Qwen3-8B}"
 export SPEC_MODEL="${SPEC_MODEL:-Qwen/Qwen3-0.6B}"
 export ACTOR_PORT="${ACTOR_PORT:-8000}"
@@ -54,3 +63,25 @@ export MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 export VLLM_SEED="${VLLM_SEED:-0}"
 export LOG_DIR="${LOG_DIR:-$SPEC_BASE/logs}"
 mkdir -p "$LOG_DIR"
+
+# --------------------------------------------------------------------------
+# Frozen local Wikipedia (KILT knowledge source, 2019-08-01).
+#
+# UNLIKE the model weights, the built corpus lives on **persistent** storage
+# ($HOME / JuiceFS), because /tmp is wiped on every pod recycle and rebuilding
+# costs a 34.8 GiB download plus ~40 min of CPU. The *raw* download is scratch
+# and stays on the overlay -- it is only needed to (re)build.
+#
+# Layout under $WIKI_DATA_DIR (see docs/LOCAL_WIKI.md):
+#   pages.zst      chunked zstd frames of page text
+#   pages.sqlite   title -> (frame offset, item index)
+#   bm25/          bm25s index over title + lead paragraph
+#   leads.jsonl.zst  title + lead paragraph (BM25 build input, kept for rebuilds)
+#   MANIFEST.json  sha256 / md5 of the source, build commands, counts, versions
+# --------------------------------------------------------------------------
+export WIKI_SNAPSHOT="${WIKI_SNAPSHOT:-kilt_20190801}"
+export WIKI_DATA_ROOT="${WIKI_DATA_ROOT:-$HOME/specmem-data/local_wiki}"
+export WIKI_DATA_DIR="${WIKI_DATA_DIR:-$WIKI_DATA_ROOT/$WIKI_SNAPSHOT}"
+export WIKI_RAW_DIR="${WIKI_RAW_DIR:-/tmp/kilt_raw}"
+export WIKI_KS_URL="${WIKI_KS_URL:-http://dl.fbaipublicfiles.com/KILT/kilt_knowledgesource.json}"
+mkdir -p "$WIKI_DATA_DIR"

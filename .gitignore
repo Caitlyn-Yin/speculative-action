@@ -240,3 +240,12 @@ hotpotqa/dist/
 hotpotqa/build/
 hotpotqa/.venv/
 hotpotqa/venv/
+
+# Frozen local Wikipedia (docs/LOCAL_WIKI.md). The built corpus and its raw
+# download live outside the repo ($HOME/specmem-data, /tmp) and must never be
+# committed; these patterns are belt-and-braces in case a build is pointed at
+# the working tree.
+*.zst
+pages.sqlite
+kilt_knowledgesource.json
+hotpotqa/cache/wiki/*.html

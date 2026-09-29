@@ -385,3 +385,73 @@ the file is never rewritten.
 - **New:** the two §4.4 criterion wordings (`INVARIANT_REPORT.md` §6).
 - **New:** `sim_obs` semantics for non-search steps.
 - The two residual contamination channels from §10.
+
+---
+
+## 13. 2026-09-29 — frozen local Wikipedia, two retrieval modes
+
+Full record: **`docs/LOCAL_WIKI.md`**. Paths: `docs/ENV_PREP.md`. Per-query fidelity data:
+`docs/fidelity_kilt_20190801.json`. Gate re-runs: `docs/INVARIANT_REPORT_title_exact.md`,
+`docs/INVARIANT_REPORT_title_exact_5q.md`.
+
+### What exists now
+
+`WikiEnv.search_step` dispatches on `constants.retrieval_backend` ∈ {`live`, `title_exact`,
+`bm25`} (env override `RETRIEVAL_BACKEND`; default still `live`). The two local modes read a
+frozen **KILT 2019-08-01** corpus — 5,903,530 pages, 7.6 GiB on JuiceFS at
+`$HOME/specmem-data/local_wiki/kilt_20190801` — and differ in **exactly one** behaviour: on a
+query that resolves to no page, `title_exact` returns upstream's
+`Could not find X. Similar: [...]` and `bm25` silently returns the top-1 BM25 page.
+Everything else is shared code, pinned by a byte-identity test on 50 titles.
+
+New files: `hotpotqa/src/local_wiki.py`, `hotpotqa/src/mw_title.py`,
+`hotpotqa/tests/test_local_wiki.py` (29 tests), `scripts/build_local_wiki.py`,
+`scripts/collect_queries.py`, `scripts/wiki_fidelity.py`.
+
+### Results
+
+- **Fidelity vs live, 300 queries: 94.0% hit/miss agreement** (bar 90%) — gold 99.0%,
+  perturbed 90.0%, agent 93.0%; same-page agreement 92.9% on the 182 both-hit queries.
+  Every disagreement category except one is *time* (renames, creations, deletions,
+  disambiguation churn, the absent redirect table), not mechanism. There is **no**
+  `disagree_casing` row, i.e. no evidence of a defect in the near-match ladder.
+- **Offline tests: 42/42 pass**, under both `title_exact` and the default backend.
+- **Online 3-arm gate under `title_exact`:** 1 question → INCONCLUSIVE (no power; the bug
+  needs `idx 1267`); 5 questions → **FAIL** on a gated `real_action` divergence at
+  `idx 5619` step 4. Cache confounding is gone (0 hits / 0 misses on all arms), so the rule
+  that made §12's run INCONCLUSIVE can no longer fire — the next rule in line fires instead.
+
+### Redirect data for this snapshot is NOT obtainable
+
+`dumps.wikimedia.org/enwiki/20190801/` is 404 (mirror keeps only `20260301`+); the Internet
+Archive `wikimediadownloads` collection has only `enwiki-20190120/20190201/20190220` for
+2019 and no `enwiki-20190801` item; KILT ships no redirect table. The partial substitutes
+present in KILT (`wikidata_info.aliases`, `anchors[].href`) were deliberately not used —
+they would fabricate a resolution rule no MediaWiki version implements. **Measured cost:
+7 of 300 queries (2.3%).**
+
+### No prebuilt BM25 index exists for KILT
+
+`pyserini`'s prebuilt catalogue has no KILT entry and its own KILT guide says to build from
+scratch (~100 GB). Built with `bm25s` 0.3.11 over `title + ". " + lead paragraph`, Lucene
+BM25, `(?u)\w+` tokenizer, English stopwords, Snowball stemmer: 1.30 GiB, 3.6 min.
+
+### Open rulings added
+
+1. **§6b of `INVARIANT_REPORT.md` is now load-bearing.** With cache confounding removed, the
+   "nondeterminism does not cascade to later steps" wording is the only thing between the
+   gate and a verdict. Not applied, not re-decided. **Blocks Phase C.**
+2. **`search_step` does not percent-encode the search URL.** `entity.replace(" ", "+")` only,
+   so any `&` in a query truncates the live search term. Affects 2 of 300 fidelity queries
+   and every live run ever done on a gold title containing `&`. A behavioural change to the
+   live path, so not patched.
+3. **A zero-result live search is treated as an article.** `Special:Search` renders no result
+   headings, so upstream's `if result_divs` test falls through and the agent receives search-page
+   boilerplate as page text. Same shape as 2.
+4. **Should `retrieval_backend` default to `title_exact`?** Left at `live` so recorded runs keep
+   their semantics; flipping it is a protocol decision.
+5. **KILT structural markers** (`Section::::`, `BULLET::::-`) survive into observations. Left in
+   so page text is a pure function of the source; stripping them changes every observation.
+
+Carried forward unchanged: §6 obs-identity, judge-contract source, `sim_obs` semantics for
+non-search steps, the two residual contamination channels.

@@ -1,3 +1,5 @@
+import os
+
 openrouter_api_key = "your-openrouter-api-key"
 openrouter_model_name = "openai/gpt-4"
 openrouter_guess_model_name = "openai/gpt-5-nano"
@@ -19,6 +21,22 @@ spec_model_name = "Qwen/Qwen3-0.6B"
 # observation state around the speculative branch (correct). False = upstream
 # behaviour, i.e. the contaminated "spec-unisolated" arm of the online gate.
 isolate_speculation = True
+
+# --------------------------------------------------------------------------
+# Retrieval backend for WikiEnv.search_step.
+#
+#   "live"        upstream: HTTP to en.wikipedia.org (drifts; not replayable)
+#   "title_exact" frozen KILT 2019-08-01 corpus; a query that resolves to no
+#                 page is a MISS -> "Could not find X. Similar: [...]"
+#   "bm25"        same corpus, same everything, except a miss is silently
+#                 answered with the top-1 BM25 page
+#
+# The two local modes differ in exactly one behaviour (local_wiki.LocalWiki
+# ._on_miss), which is what makes them an environment manipulation rather than
+# two different environments. Default stays "live" so that existing runs keep
+# their recorded semantics; set it here or via RETRIEVAL_BACKEND.
+# --------------------------------------------------------------------------
+retrieval_backend = os.environ.get("RETRIEVAL_BACKEND", "live")
 
 local_api_key = "EMPTY"          # vLLM ignores the value, the SDK requires one
 local_seed = 0                   # forwarded to vLLM for reproducibility

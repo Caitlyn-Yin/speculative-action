@@ -158,6 +158,25 @@ class WikiEnv(gym.Env):
         self.obs = self.get_page_obs(self.page)
 
     def search_step(self, entity):
+        """Dispatch to the configured retrieval backend.
+
+        `live` is upstream: an HTTP request to en.wikipedia.org (optionally
+        through the pinned response cache). `title_exact` and `bm25` go to the
+        frozen 2019-08-01 local corpus; see src/local_wiki.py and
+        docs/LOCAL_WIKI.md. All three set the same attributes, so nothing
+        downstream -- runner isolation, wrappers, metrics -- changes.
+        """
+        backend = constants.retrieval_backend
+        if backend == "live":
+            return self._search_step_live(entity)
+        if backend in ("title_exact", "bm25"):
+            from .local_wiki import get_local_wiki
+            return get_local_wiki(backend).search_step(self, entity)
+        raise ValueError(
+            f"constants.retrieval_backend={backend!r}; "
+            "expected one of 'live', 'title_exact', 'bm25'")
+
+    def _search_step_live(self, entity):
         entity_ = entity.replace(" ", "+")
         search_url = f"https://en.wikipedia.org/w/index.php?search={entity_}"
         old_time = time.time()
@@ -173,7 +192,7 @@ class WikiEnv(gym.Env):
         else:
             page = [p.get_text().strip() for p in soup.find_all("p") + soup.find_all("ul")]
             if any("may refer to:" in p for p in page):
-                self.search_step("[" + entity + "]")
+                self._search_step_live("[" + entity + "]")
             else:
                 self.page = ""
                 for p in page:
