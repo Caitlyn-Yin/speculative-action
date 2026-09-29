@@ -71,6 +71,60 @@ class LLMClient:
         content = response.choices[0].message.content
         return self._strip_thinking(content)
 
+    def call_with_logprobs(self, prompt, max_tokens=None, top_logprobs=20,
+                           stop=None):
+        """Greedy completion plus per-token log-probabilities.
+
+        Local backend only -- the external providers either do not expose
+        logprobs or do so incompatibly, and research runs are local-only anyway.
+
+        Returns a dict::
+
+            {"text": str,                      # raw content, NOT thinking-stripped
+             "tokens": [{"token": str,
+                         "logprob": float,     # top-1 (i.e. chosen) token logprob
+                         "top": {tok: logprob, ...}}, ...]}
+
+        `tokens` is in generation order. `top` holds the `top_logprobs`
+        alternatives at that position, which is what the Yes/No margin of
+        criteria 7-8 reads. The content is returned unstripped because the
+        token list has to stay aligned with it; callers that want prose should
+        strip it themselves.
+        """
+        if self.backend != "local":
+            raise NotImplementedError(
+                "call_with_logprobs requires the local (vLLM) backend")
+
+        extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
+        if constants.local_seed is not None:
+            extra_body["seed"] = constants.local_seed
+
+        response = self.local_client.chat.completions.create(
+            model=self.model_name,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=self.temperature,
+            max_tokens=self.max_tokens if max_tokens is None else max_tokens,
+            top_p=self.top_p,
+            stop=stop,
+            logprobs=True,
+            top_logprobs=top_logprobs,
+            extra_body=extra_body,
+        )
+        choice = response.choices[0]
+        tokens = []
+        lp = getattr(choice, "logprobs", None)
+        for item in (getattr(lp, "content", None) or []):
+            tokens.append({
+                "token": item.token,
+                "logprob": item.logprob,
+                "top": {t.token: t.logprob
+                        for t in (getattr(item, "top_logprobs", None) or [])},
+            })
+        return {"text": choice.message.content or "", "tokens": tokens}
+
     @staticmethod
     def _strip_thinking(text):
         """Remove any <think>...</think> residue, including an unclosed block."""
