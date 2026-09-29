@@ -24,8 +24,22 @@ class HotPotQARun:
             top_p=constants.top_p,
             base_url=constants.actor_base_url,
         )
+        # The speculator as an ACTION proposer (constants.spec_actions_from ==
+        # "speculator"). Distinct from WikiEnv.guess_llm, which uses the same
+        # model to imagine a page; this one is prompted with the ReAct history.
+        self.spec_llm = LLMClient(
+            model_name=guess_model_name,
+            temperature=constants.guess_temperature,
+            max_tokens=constants.max_spec_action_tokens,
+            top_p=constants.guess_top_p,
+            base_url=constants.spec_base_url,
+        )
         self.model_name = model_name
         self.guess_model_name = guess_model_name
+        # Per-step token records for the speculated-action generation, filled by
+        # webthink when constants.capture_spec_logprobs is on. Consumed by
+        # scripts/collect_pairs.py -> gates.Pair.spec_tokens (criterion 9).
+        self.spec_token_records = []
         self.env = self._get_env()
         self.simulation_observations_dict = {}
         self.current_index = None
@@ -156,13 +170,29 @@ class HotPotQARun:
         actions = self.extract_actions(thought_action)
         return thought, actions
 
-    def generate_thought_actions(self, i, running_prompt, n_calls_badcalls, num_actions=1, max_retries=1):
-        n_calls_badcalls[0] += 1
+    def generate_thought_actions(self, i, running_prompt, n_calls_badcalls, num_actions=1,
+                                 max_retries=1, llm=None, capture_logprobs=False):
+        """Ask `llm` (default: the actor) for a thought plus `num_actions` actions.
 
-        thought_action = self.llm.call(
-            running_prompt + PromptTemplates.ACTION_GUESS_PROMPT.format(i=i, num_guesses=num_actions),
-            stop=None,
-        )
+        `capture_logprobs` routes the call through LLMClient.call_with_logprobs
+        and leaves the per-token records in `self.last_tokens`, aligned with the
+        text the actions were parsed from. On a retry the records are replaced
+        by the retry call's, so `last_tokens` always describes the generation
+        that produced the returned actions; it is None when nothing was
+        captured.
+        """
+        llm = self.llm if llm is None else llm
+        n_calls_badcalls[0] += 1
+        self.last_tokens = None
+
+        guess_prompt = running_prompt + PromptTemplates.ACTION_GUESS_PROMPT.format(
+            i=i, num_guesses=num_actions)
+        if capture_logprobs:
+            captured = llm.call_with_logprobs(guess_prompt, stop=None)
+            thought_action = llm._strip_thinking(captured["text"])
+            self.last_tokens = captured["tokens"]
+        else:
+            thought_action = llm.call(guess_prompt, stop=None)
         thought, actions = self.separate_thought_and_actions(i, thought_action)
 
         retry_attempt = 1
@@ -170,15 +200,20 @@ class HotPotQARun:
             self.log(f"  [Retry {retry_attempt}/{max_retries}] No actions found, retrying...")
             n_calls_badcalls[0] += 1
             n_calls_badcalls[1] += 1
-            temp_actions = self.llm.call(
-                running_prompt + PromptTemplates.RETRY_PROMPT.format(
-                    attempt=retry_attempt, role=constants.agent_role, num_guesses=num_actions
-                )
+            retry_prompt = running_prompt + PromptTemplates.RETRY_PROMPT.format(
+                attempt=retry_attempt, role=constants.agent_role, num_guesses=num_actions
             )
+            if capture_logprobs:
+                captured = llm.call_with_logprobs(retry_prompt, stop=None)
+                temp_actions = llm._strip_thinking(captured["text"])
+                self.last_tokens = captured["tokens"]
+            else:
+                temp_actions = llm.call(retry_prompt)
             actions = self.extract_actions(temp_actions)
             retry_attempt += 1
 
         if not actions:
+            self.last_tokens = None
             raise ValueError("Action not found in LLM output after all retries")
 
         return thought, actions
@@ -199,6 +234,13 @@ class HotPotQARun:
             sim_running_prompt = running_prompt
             self.env.sim_trajectory_dict["prompt"] = sim_running_prompt
 
+        # Who proposes the k candidates, and whether their token logprobs are
+        # kept. Upstream: the actor, no logprobs (constants defaults).
+        spec_llm = (self.spec_llm if constants.spec_actions_from == "speculator"
+                    else self.llm)
+        capture = bool(constants.capture_spec_logprobs)
+        self.spec_token_records = []
+
         n_calls_badcalls = [0, 0]
 
         for i in range(1, n):
@@ -214,7 +256,12 @@ class HotPotQARun:
                         i, sim_running_prompt, n_calls_badcalls,
                         num_actions=constants.guess_num_actions,
                         max_retries=constants.max_guess_retries,
+                        llm=spec_llm, capture_logprobs=capture,
                     )
+                    if capture:
+                        self.spec_token_records.append(
+                            {"i": i, "model": spec_llm.model_name,
+                             "tokens": self.last_tokens})
                     sim_running_prompt = running_prompt
             except ValueError as e:
                 self.log(f"[ERROR] {e}", save_log=False)

@@ -31,6 +31,14 @@ micromamba create -y -p "$SPEC_BASE/envs/pipeline" python=3.10 -c conda-forge
 # 0.29.1 keeps forwarding (with a DeprecationWarning) and needs numpy<2.
 "$SPEC_BASE/envs/pipeline/bin/pip" install --no-input "gymnasium==0.29.1" "numpy<2"
 
+# Frozen local Wikipedia (docs/LOCAL_WIKI.md). These were installed by hand when
+# the corpus was built, so the 2026-09-29 pod recycle came back with a pipeline
+# env that could not read pages.zst at all (ModuleNotFoundError: zstandard, 16
+# errors in tests/test_local_wiki.py). bm25s is pinned because the index on disk
+# was written by 0.3.11.
+"$SPEC_BASE/envs/pipeline/bin/pip" install --no-input \
+    zstandard "bm25s==0.3.11" PyStemmer pyarrow
+
 echo "=== vllm serving env ==="
 micromamba create -y -p "$SPEC_BASE/envs/vllm" python=3.12 -c conda-forge
 "$SPEC_BASE/envs/vllm/bin/pip" install --no-input vllm
