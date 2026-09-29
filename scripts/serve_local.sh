@@ -21,9 +21,23 @@ stop_servers() {
   echo "stop signal sent to :$ACTOR_PORT and :$SPEC_PORT"
 }
 
+# Extra per-role flags. Used to attribute the 2026-09-29 replay nondeterminism:
+# the actor was not deterministic on a repeated *identical* request
+# (scripts/probe_determinism.py), and vLLM's prefix cache is the suspect, since
+# a prompt whose prefix is cached is prefilled in a different chunk layout than
+# one computed fresh. Set e.g.
+#   EXTRA_ACTOR_ARGS="--no-enable-prefix-caching" bash scripts/serve_local.sh actor
+export EXTRA_ACTOR_ARGS="${EXTRA_ACTOR_ARGS:-}"
+export EXTRA_SPEC_ARGS="${EXTRA_SPEC_ARGS:-}"
+
 start_one() {
   local role="$1" model="$2" port="$3" frac="$4"
   local log="$LOG_DIR/vllm_${role}.log"
+  local extra=""
+  case "$role" in
+    actor) extra="$EXTRA_ACTOR_ARGS" ;;
+    spec)  extra="$EXTRA_SPEC_ARGS" ;;
+  esac
 
   if curl -sf "http://127.0.0.1:$port/v1/models" >/dev/null 2>&1; then
     echo "[$role] already serving on :$port — leaving it alone"
@@ -43,6 +57,7 @@ start_one() {
       --max-model-len "$MAX_MODEL_LEN" \
       --seed "$VLLM_SEED" \
       --no-enable-log-requests \
+      $extra \
       > "$log" 2>&1 &
   echo "[$role] pid $!"
 }
