@@ -67,4 +67,31 @@ If S3 rate < 2% in both backends at pilot, **stop and investigate as a probable 
 
 ## Amendments
 
-*(none yet — append new subsections here, each in its own commit)*
+### Amendment 1 (2026-09-30) — serving config: vLLM prefix caching OFF
+
+**What changed.** Both vLLM servers are now started with
+`--no-enable-prefix-caching` (`EXTRA_ACTOR_ARGS` / `EXTRA_SPEC_ARGS` in
+`scripts/serve_local.sh`). Nothing about the unit, the arms, the labels, the
+factors or the hypotheses changes. Temperature stays 0, the prompts and parser
+stay identical between collection and re-execution.
+
+**Why.** The first 25-question pilot failed go/no-go (a) badly: **22.6%**
+(`title_exact`) and **13.6%** (`bm25`) of control re-runs did not reproduce
+their logged trajectory, against a `< 5%` bar. Every divergence was
+action-level, never observation-level. Two measurements attributed it
+(`docs/PAPERB_PILOT_REPORT.md`):
+
+* `scripts/diag_nondeterminism.py` — the replay loop and the collection loop
+  agree with *each other* and disagree with the log, and two identical replays
+  can disagree at the same step. So it is not a prompt mismatch between the two
+  loops.
+* `scripts/probe_determinism.py` — one identical request issued 10 times:
+  with prefix caching on, 1 of 10 replies differed on one question; with it off,
+  4 of 4 questions returned 10/10 identical replies.
+
+Re-running the same pilot with caching off gave a nondeterministic-pair rate of
+**0.0%** on both backends (321 and 288 pairs).
+
+**Consequence.** The cache-on pilot corpus is **not** part of Paper B data; it
+is retained only as the evidence for this amendment. All Paper B data is
+collected and re-executed under caching off.
