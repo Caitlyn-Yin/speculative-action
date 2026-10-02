@@ -23,9 +23,9 @@ Every grid point is reported alongside, so nothing rests on that choice.
 Usage:
 
     $PIPELINE_PY scripts/analyze_paperb.py \
-        --backend title_exact /tmp/specmem/paperb/pilot25_title_exact \
-        --backend bm25 /tmp/specmem/paperb/pilot25_bm25 \
-        --out /tmp/specmem/paperb/analysis
+        --backend title_exact $SPEC_RUNS_DIR/pilot25_title_exact \
+        --backend bm25 $SPEC_RUNS_DIR/pilot25_bm25 \
+        --out $SPEC_RUNS_DIR/pilot25_meta/analysis
 """
 
 import argparse
@@ -40,6 +40,7 @@ REPO = os.path.dirname(HERE)
 HOTPOTQA = os.path.join(REPO, "hotpotqa")
 sys.path.insert(0, HOTPOTQA)
 
+from src import durability  # noqa: E402
 from src import gates  # noqa: E402
 
 N_BOOT = 10000
@@ -283,6 +284,9 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--n-boot", type=int, default=N_BOOT)
     args = ap.parse_args(argv)
+
+    durability.require_durable_outputs(out=args.out)
+    durability.warn_if_outside_spec_base(out=args.out)
 
     data, summaries, scored_counts = {}, {}, {}
     for name, d in args.backend:

@@ -5,23 +5,44 @@ Rebuild with `scripts/setup_envs.sh` then `scripts/download_ladder.sh`.
 
 ## Storage layout
 
-| Path | FS | Free | Use |
-|---|---|---|---|
-| `/tmp/specmem` | overlay | 86 GB after downloads | envs, HF_HOME, logs, XDG dirs |
-| `$HOME` | JuiceFS | 12 GB / 64 GB (82 % full) | repo + docs only — **never caches** |
+`scripts/env.sh` is the single source of truth for paths, and it defines **two roots**. The split is
+binding, not advisory — `hotpotqa/src/durability.py` aborts any run that would write an output to
+the ephemeral one. Rules and rationale: `docs/WAYS_OF_WORKING.md` §2a.
 
-`scripts/env.sh` is the single source of truth for paths. The pre-existing ES-project cache
-(`$HOME/.cache/huggingface`, 21 GB) and envs (`$HOME/micromamba`) were **not touched**.
+| Variable | Path | FS | Survives recycle | Holds |
+|---|---|---|---|---|
+| `$SPEC_BASE` | `$HOME/specmem-data` | JuiceFS | **yes** | **every output** — `runs/`, logs, judge + embedding caches, the frozen corpus |
+| `$SPEC_SCRATCH` | `/tmp/specmem` | overlay | no | envs, `HF_HOME` weights, XDG dirs, raw corpus download |
 
-> **`/tmp` does not survive a pod restart.** Envs and weights are reproducible from the two scripts;
-> nothing durable is stored there.
+Outputs, all under `$SPEC_BASE`:
+
+| Variable | Path | Holds |
+|---|---|---|
+| `$SPEC_RUNS_DIR` | `$SPEC_BASE/runs` | run artifacts, one subdir per run id — **the only tree `checkpoint.sh` sweeps** |
+| `$LOG_DIR` | `$SPEC_BASE/logs` | vLLM server logs, stage logs |
+| `$JUDGE_CACHE_DIR` | `$SPEC_BASE/cache/judge` | judge + embedding caches (`docs/JUDGE_CONTRACT.md`) |
+| `$WIKI_CACHE_DIR` | `$SPEC_BASE/cache/wiki` | pinned live-Wikipedia responses (`WIKI_CACHE=1`) |
+| `$WIKI_DATA_ROOT` | `$SPEC_BASE/local_wiki` | frozen KILT corpus, 7.6 GiB |
+| `$HF_EMBED_HOME` | `$SPEC_BASE/hf_embed` | `bge-base-en-v1.5`, 419 MB |
+
+> **`/tmp` does not survive a pod restart**, and it has now cost this project two data losses.
+> Envs and weights are reproducible from `setup_envs.sh` + `download_ladder.sh`; **nothing that a
+> run produces may be stored there.**
+
+**`$SPEC_BASE` is tight: 64 GB quota, ~8.7 GB free** (the corpus is 7.7 GB of it). It is sized for
+jsonl/json outputs, not for weights — which is exactly why the 56 GB ladder stays on scratch. Watch
+it with `df -h $HOME`; if outputs start to crowd it, checkpoint and prune rather than relocating to
+`/tmp`.
+
+The pre-existing ES-project cache (`$HOME/.cache/huggingface`, 21 GB) and envs
+(`$HOME/micromamba`) were **not touched**.
 
 ## Environments (P1 — DONE)
 
 | Env | Python | Key versions |
 |---|---|---|
-| `/tmp/specmem/envs/pipeline` | 3.10.21 | gymnasium **0.29.1** (pinned), numpy 1.26.4, openai 3.16.2, pytest 9.1.1 |
-| `/tmp/specmem/envs/vllm` | 3.12 | vllm **0.29.0**, torch 2.13.0+cu130 |
+| `$SPEC_SCRATCH/envs/pipeline` | 3.10.21 | gymnasium **0.29.1** (pinned), numpy 1.26.4, openai 3.16.2, pytest 9.1.1 |
+| `$SPEC_SCRATCH/envs/vllm` | 3.12 | vllm **0.29.0**, torch 2.13.0+cu130 |
 
 **gymnasium is pinned for a reason.** The repo depends on `gym.Wrapper` attribute forwarding —
 `HotPotQAWrapper._get_info` reads `self.steps`/`self.answer` from the inner `WikiEnv`
@@ -32,7 +53,7 @@ Rebuild with `scripts/setup_envs.sh` then `scripts/download_ladder.sh`.
 
 ## Ladder (P2 — DONE)
 
-`HF_HOME=/tmp/specmem/hf_home`, 56 GB total, all five repos ungated.
+`HF_HOME=$SPEC_SCRATCH/hf_home`, 56 GB total, all five repos ungated.
 
 | Model | On disk | `config.json` sha256 | revision |
 |---|---|---|---|
@@ -95,7 +116,7 @@ because this file is the environment record.
 Persistent storage, `$HOME` / JuiceFS — survives a pod recycle, 7.6 GiB:
 
 ```
-$WIKI_DATA_ROOT = $HOME/specmem-data/local_wiki
+$WIKI_DATA_ROOT = $SPEC_BASE/local_wiki          # = $HOME/specmem-data/local_wiki
 $WIKI_DATA_DIR  = $WIKI_DATA_ROOT/kilt_20190801
     pages.zst  5.14 GiB   pages.sqlite  639 MiB   leads.jsonl.zst  537 MiB
     bm25/      1.30 GiB   MANIFEST.json
@@ -107,7 +128,7 @@ $WIKI_DATA_ROOT/aux
 Scratch, container overlay — wiped by a recycle, re-downloadable in ~13 min:
 
 ```
-$WIKI_RAW_DIR = /tmp/kilt_raw
+$WIKI_RAW_DIR = $SPEC_SCRATCH/kilt_raw
     kilt_knowledgesource.json   34.76 GiB   build/   (staging; see LOCAL_WIKI.md §4)
 ```
 
@@ -129,8 +150,9 @@ $PIPELINE_PY -m pip install zstandard bm25s PyStemmer pyarrow
 $PIPELINE_PY scripts/build_local_wiki.py --stage all      # ~27 min total
 ```
 
-**Extra pipeline-env dependencies** beyond `setup_envs.sh`: `zstandard` 0.25.0,
-`bm25s` 0.3.11, `PyStemmer`, `pyarrow`.
+**Extra pipeline-env dependencies**: `zstandard` 0.25.0, `bm25s` 0.3.11, `PyStemmer`,
+`pyarrow`. These are now installed by `setup_envs.sh` itself, so the manual `pip install`
+above is only needed on an env built before 2026-09-29.
 
 ### Trap 4 — `$HOME/.config` is a JuiceFS mount-root artifact
 

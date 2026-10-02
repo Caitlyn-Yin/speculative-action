@@ -4,6 +4,7 @@ import argparse
 from os.path import join
 
 from src import constants
+from src import durability
 from src.runner import HotPotQARun
 from src.utils import Utils
 from src.metrics import Metrics
@@ -93,6 +94,11 @@ def main():
     parser.add_argument("--guessmodelname", default=constants.openrouter_guess_model_name, help="Guess model name")
     parser.add_argument("--cleanuptrajs", action="store_true", help="Clean up incomplete trajectories")
     args = parser.parse_args()
+
+    # Every trajectory this writes goes under runner.base_traj_path, which is
+    # rooted at constants.run_output_root ($SPEC_RUNS_DIR).
+    durability.require_durable_outputs(
+        trajectories=constants.run_output_root)
 
     runner = HotPotQARun(
         model_name=args.modelname,

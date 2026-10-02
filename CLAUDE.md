@@ -83,9 +83,9 @@ re-invent them — that is an open ruling for the PI (see §6).
 
 ---
 
-## 4. Runtime state — the pod has been recycled
+## 4. Runtime state — the pod has been recycled (again, 2026-10-02)
 
-`/tmp` does not survive a pod restart, and **it has restarted**. Verified 2026-09-28:
+`/tmp` does not survive a pod restart, and **it has restarted twice**. Verified 2026-10-02:
 
 ```
 /tmp/specmem            → does not exist
@@ -94,25 +94,37 @@ nvidia-smi              → H200 NVL, 0 MiB / 143771 MiB used
 :8001 (speculator)      → DOWN
 ```
 
+**The 2026-10-02 recycle also destroyed all Paper B data**, which was under `/tmp/specmem/paperb`:
+both pilot runs (both backends), the probe/diagnosis JSONs, and the 100-question scale-up that was
+still running. Only the numbers transcribed into `docs/PAPERB_PILOT_REPORT.md` survive. Nothing is
+recoverable; the stages have to be re-run. See §4a.
+
 So P1/P2/P6 (envs, weights, servers) are **not currently materialised**, even though their
 commits are on the branch. Everything is reproducible from committed scripts:
 
 ```bash
-bash scripts/setup_envs.sh      # pipeline py3.10 env + vllm py3.12 env on /tmp/specmem
+bash scripts/setup_envs.sh      # both envs on $SPEC_SCRATCH ('pipeline' arg = repo deps only)
 bash scripts/download_ladder.sh # Qwen3 0.6B/1.7B/4B/8B/14B → HF_HOME on the overlay (~56 GB)
 bash scripts/serve_local.sh both  # actor 8B :8000 (gpu 0.60) + spec 0.6B :8001 (gpu 0.25)
 $PIPELINE_PY scripts/check_server.py --all   # goes through LLMClient, not raw HTTP
 bash scripts/serve_local.sh stop
+bash scripts/checkpoint.sh        # ALWAYS last: run artifacts -> results/ -> origin
 ```
 
-`scripts/env.sh` is the **single source of truth for paths** and encodes four node-specific traps —
-read it before debugging any startup failure:
+`scripts/env.sh` is the **single source of truth for paths**. It defines **two roots** —
+`$SPEC_BASE` (`$HOME/specmem-data`, JuiceFS, persistent, **every output**) and `$SPEC_SCRATCH`
+(`/tmp/specmem`, overlay, ephemeral, **read-only inputs and rebuildable tooling only**). The split
+is enforced by `hotpotqa/src/durability.py`, which every entry script imports and which aborts a
+run whose output path is ephemeral. Rules: `docs/WAYS_OF_WORKING.md` §2a.
+
+It also encodes five node-specific traps — read it before debugging any startup failure:
 
 1. `$HOME/.config` is a **root-owned regular file**, not a directory → XDG redirected to the overlay.
    (Same root cause breaks `gh`, which breaks `git push` — see §6.)
 2. No CUDA toolkit (`nvcc` absent) → `VLLM_USE_FLASHINFER_SAMPLER=0`. Harmless: everything is greedy.
 3. conda vs system `libstdc++` → prepend `$VLLM_ENV/lib` to `LD_LIBRARY_PATH` for `$VLLM_PY`.
-4. `$HOME` is JuiceFS, 64 GB quota, ~12 GB free → **never put caches there**. The ES project's
+4. `$HOME` is JuiceFS, 64 GB quota, **~8.7 GB free** → **never put caches or weights there**, but
+   **always put outputs there** (that is `$SPEC_BASE`). The ES project's
    21 GB cache at `$HOME/.cache/huggingface` is a separate project — leave it alone.
 
 **gymnasium is pinned to 0.29.1 on purpose.** The code relies on `gym.Wrapper.__getattr__`
@@ -121,6 +133,33 @@ That was removed in gymnasium 1.0 and raises `AttributeError` under 1.3.0. New c
 `env.unwrapped`, as `_snapshot_env` does.
 
 Wikipedia and HuggingFace were both reachable (HTTP 200) as of the last check.
+
+## 4a. What the 2026-10-02 recycle destroyed
+
+Verified by `find` over `$HOME` and `/tmp` on 2026-10-02: **zero** Paper B output artifacts exist
+anywhere on this node. Not "stale" — absent.
+
+| Gone | Was at | Recoverable? |
+|---|---|---|
+| Pilot run 1 corpora (cache-on), both backends | `/tmp/specmem/paperb/pilot25_*` | no — re-run |
+| Pilot run 2 corpora (cache-off), both backends | `/tmp/specmem/paperb/pilot25b_*` | no — re-run |
+| 100-question scale-up, in flight | `/tmp/specmem/paperb/scale100_*` | no — re-run |
+| `probe_*.json`, `diag_nondet_*.json` | `/tmp/specmem/paperb/` | no; numbers transcribed in `PAPERB_PILOT_REPORT.md` §4–5 |
+| Invariant-gate artifacts | `/tmp/specmem/invariant` | no; verdicts transcribed in `docs/INVARIANT_REPORT*.md` |
+| Envs, 56 GB weights, logs, XDG | `/tmp/specmem/{envs,hf_home,logs,xdg}` | **yes** — `setup_envs.sh`, `download_ladder.sh` |
+
+Survived, on `$SPEC_BASE` (JuiceFS):
+
+| Kept | Path | Size |
+|---|---|---|
+| Frozen KILT corpus + BM25 + MANIFEST | `$SPEC_BASE/local_wiki/kilt_20190801` | 7.7 GB |
+| `aux/` (gold parquet, 318 pinned live responses) | `$SPEC_BASE/local_wiki/aux` | — |
+| Embedding weights | `$SPEC_BASE/hf_embed` | 419 MB |
+
+The judge and embedding caches were **never populated** — `hotpotqa/cache/judge/` was created on
+2026-09-29 and is empty, because `score_criteria.py` has never been run on real data.
+
+This is what `src/durability.py` and `scripts/checkpoint.sh` exist to prevent recurring.
 
 ---
 
@@ -139,10 +178,14 @@ Wikipedia and HuggingFace were both reachable (HTTP 200) as of the last check.
 
 ## 6. Live blockers — read before planning anything
 
-1. **`git push` fails.** `~/.gitconfig` delegates GitHub auth to `gh`; `gh` cannot start because
-   `$HOME/.config` is a root-owned file. No sudo ⇒ unfixable here. `origin` is still at
-   `dc938b9` with only `HEAD` + `refs/heads/main`. **All 10 of our commits and the tag exist
-   locally only.** Per §5 this means Track P is *not* complete. Needs a destination from the PI.
+1. ~~**`git push` fails.**~~ **CLOSED 2026-09-28.** Pushing works over SSH with the repo deploy key
+   (`git@github.com-specmem`); `gh`/HTTPS was abandoned, not repaired, because `$HOME/.config` is a
+   root-owned JuiceFS mount-root artifact. Procedure: `docs/WAYS_OF_WORKING.md` §3.
+   `origin/phase2-fixed-scaleup` and the tag are both present. Verify after any pod restart with
+   `ssh -T git@github.com-specmem`.
+   *Note:* that check currently answers `Hi Caitlyn-Yin!` rather than
+   `Hi Caitlyn-Yin/speculative-action!`, i.e. the key is registered **account-wide, not as a repo
+   deploy key**. It pushes fine, but with a wider blast radius than §3 intends.
 2. **GH200 unreachable** — no mount, no SSH key, no agent, no SLURM. Third independent check
    failed. `/home/hyin66/salvage_speculative_action.sh` exists but must be run *on the GH200*
    by a human; it has never been executed anywhere.

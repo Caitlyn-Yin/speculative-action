@@ -6,6 +6,8 @@ import re
 import string
 from collections import Counter
 
+from . import constants
+
 
 DATA_DIR = "data"
 HOTPOTQA_SPLIT_FILE = {
@@ -242,14 +244,18 @@ class FeverWrapper(gym.Wrapper):
 
 
 class LoggingWrapper(gym.Wrapper):
-    def __init__(self, env, folder="trajs", file_id=None):
+    def __init__(self, env, folder=None, file_id=None):
         super().__init__(env)
         self.trajs = []
         self.traj = {"observations": [], "actions": []}
-        self.folder = folder
+        # Default under $SPEC_RUNS_DIR (persistent), not the CWD. Upstream also
+        # created "trajs" literally while writing to self.folder, so a non-default
+        # folder made the write fail; makedirs now follows self.folder.
+        self.folder = folder if folder is not None else os.path.join(
+            constants.run_output_root, "trajs")
         self.file_id = np.random.randint(0, 10000000) if file_id is None else file_id
-        self.file_path = f"{self.folder}/{self.file_id}.json"
-        os.makedirs("trajs", exist_ok=True)
+        self.file_path = os.path.join(self.folder, f"{self.file_id}.json")
+        os.makedirs(self.folder, exist_ok=True)
 
     def __len__(self):
         return len(self.env.data)
@@ -278,7 +284,7 @@ class LoggingWrapper(gym.Wrapper):
         self.update_record()
         with open(self.file_path, "w") as f:
             json.dump(self.trajs, f)
-            print(f"Saved trajs to trajs/{self.file_id}.json")
+            print(f"Saved trajs to {self.file_path}")
 
     def close(self):
         self.write()

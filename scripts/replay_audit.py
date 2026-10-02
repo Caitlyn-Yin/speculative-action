@@ -30,8 +30,8 @@ Writes:
 Usage (from hotpotqa/, servers up):
 
     RETRIEVAL_BACKEND=title_exact $PIPELINE_PY ../scripts/replay_audit.py \
-        --collected /tmp/specmem/paperb/title_exact \
-        --out /tmp/specmem/paperb/title_exact
+        --collected $SPEC_RUNS_DIR/pilot25_title_exact \
+        --out $SPEC_RUNS_DIR/pilot25_title_exact
 """
 
 import argparse
@@ -49,6 +49,7 @@ os.chdir(HOTPOTQA)
 sys.path.insert(0, HOTPOTQA)
 
 from src import constants              # noqa: E402
+from src import durability             # noqa: E402
 from src import gates                  # noqa: E402
 from src import paperb                 # noqa: E402
 from src.runner import HotPotQARun     # noqa: E402
@@ -176,6 +177,12 @@ def main(argv=None):
                     help="title_exact hit/miss agreement vs live, from "
                          "docs/LOCAL_WIKI.md; go/no-go (c) reads this")
     args = ap.parse_args(argv)
+
+    # Durability gate before the first replay (a replay costs ~1.7 s and the
+    # pilot audit was ~500 s per backend -- all of it was lost once already).
+    durability.require_durable_outputs(
+        out=args.out, trajectories=constants.run_output_root)
+    durability.warn_if_outside_spec_base(out=args.out)
 
     records = {r["idx"]: r for r in read_jsonl(
         os.path.join(args.collected, "trajectories.jsonl"))}

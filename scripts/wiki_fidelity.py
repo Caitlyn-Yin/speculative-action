@@ -47,6 +47,7 @@ os.chdir(HOTPOTQA)
 
 from bs4 import BeautifulSoup                        # noqa: E402
 
+from src import durability                            # noqa: E402
 from src import environment                           # noqa: E402
 from src.environment import clean_str, wiki_get       # noqa: E402
 from src.local_wiki import DISAMBIG_MARKER, LocalWiki  # noqa: E402
@@ -263,6 +264,13 @@ def main():
     ap.add_argument("--sleep", type=float, default=0.25)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
+
+    # The pinned live cache under aux/ is what makes this a replayable
+    # measurement rather than a fresh scrape of today's Wikipedia.
+    durability.require_durable_outputs(
+        report=args.out or os.path.join(REPO, "docs",
+                                        "fidelity_kilt_20190801.json"),
+        live_cache=os.path.join(os.environ["WIKI_DATA_ROOT"], "aux"))
 
     data_dir = os.environ["WIKI_DATA_DIR"]
     aux_dir = os.path.join(os.environ["WIKI_DATA_ROOT"], "aux")

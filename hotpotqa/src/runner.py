@@ -47,11 +47,14 @@ class HotPotQARun:
         self.to_print_output = to_print_output
 
     def recalc_base_traj_path(self):
-        btp = (
-            "./run_metrics/agent_"
-            + self.model_name.split('/')[-1]
-            + "_top" + str(constants.guess_num_actions)
-            + "/trajs_" + self.guess_model_name.split("/")[-1]
+        # Rooted at constants.run_output_root ($SPEC_RUNS_DIR), not the CWD:
+        # these are run outputs and must land on persistent storage.
+        btp = join(
+            constants.run_output_root,
+            "run_metrics",
+            "agent_" + self.model_name.split('/')[-1]
+            + "_top" + str(constants.guess_num_actions),
+            "trajs_" + self.guess_model_name.split("/")[-1],
         )
         self.base_traj_path = btp
         return btp

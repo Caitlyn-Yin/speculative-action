@@ -10,6 +10,10 @@ with `--no-enable-prefix-caching` the same pilot gives a **0.0%** nondeterminist
 rate on both backends. All three go/no-go gates then pass, so the scale-up to 100
 questions per backend is authorized by the prereg and is running.
 
+> **2026-10-02:** that scale-up never finished — the pod recycled and wiped its output
+> directory along with both pilot corpora. See §8. The gate verdicts below stand as a
+> record of what was measured, but no stored data backs them any more.
+
 Pushed commits for this work: `8032e25` (battery), `105a7bd` (collection + audit),
 `6d5d6b3` (statistics + diagnosis), plus this report's commit — see §8.
 
@@ -200,9 +204,25 @@ alone.
 
 ## 8. Durability
 
-| Artifact | Where |
-|---|---|
-| Code + docs | `origin/phase2-fixed-scaleup` — `8032e25`, `105a7bd`, `6d5d6b3`, and this report's commit |
-| Pilot corpora (both runs), scale-up corpora | `/tmp/specmem/paperb/{pilot25_,pilot25b_,scale100_}{title_exact,bm25}` — **on the overlay, NOT durable**; reproducible from `collect_pairs.py` + `replay_audit.py` given the same servers and corpus |
-| Frozen corpus | `$HOME/specmem-data/local_wiki/kilt_20190801` (JuiceFS, durable) |
-| Probe/diagnosis reports | `/tmp/specmem/paperb/{probe_default,probe_noprefix,diag_nondet_title_exact}.json` — not durable; the numbers that matter are transcribed above |
+> **POST-HOC CORRECTION (2026-10-02): every artifact this section called "not durable" is now
+> GONE.** The pod recycled and wiped `/tmp/specmem`, taking both pilot corpora and the scale-up
+> that §6 says "is running". Nothing below is recoverable. The numbers in §3 and §6 survive only
+> because they were transcribed into this file; they can no longer be re-derived from stored data,
+> only by re-running the stages.
+>
+> This section as originally written is the evidence for why
+> `docs/WAYS_OF_WORKING.md` §2a now exists: it **correctly identified** the artifacts as sitting on
+> ephemeral storage, and the run proceeded anyway. Labelling a risk is not mitigating it. The
+> mitigation is `hotpotqa/src/durability.py` (which would have refused to start this run) plus
+> `scripts/checkpoint.sh` (which would have put the pairs into git).
+
+| Artifact | Where | Status |
+|---|---|---|
+| Code + docs | `origin/phase2-fixed-scaleup` — `8032e25`, `105a7bd`, `6d5d6b3`, `20b3101` | **intact** |
+| Pilot corpora (both runs), scale-up corpora | `/tmp/specmem/paperb/{pilot25_,pilot25b_,scale100_}{title_exact,bm25}` | **LOST** — re-run `collect_pairs.py` + `replay_audit.py` |
+| Frozen corpus | `$SPEC_BASE/local_wiki/kilt_20190801` (JuiceFS) | **intact**, 7.7 GB |
+| Probe/diagnosis reports | `/tmp/specmem/paperb/{probe_default,probe_noprefix,diag_nondet_title_exact}.json` | **LOST** — numbers transcribed in §4–5 |
+
+Consequence for the prereg: the go/no-go decision in §6 was taken on data that no longer exists.
+The pilot must be re-run under Amendment 1 before the scale-up can be claimed as authorized by
+stored evidence rather than by this report's say-so.

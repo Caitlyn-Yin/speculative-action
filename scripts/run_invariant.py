@@ -37,6 +37,7 @@ os.chdir(HOTPOTQA)
 sys.path.insert(0, HOTPOTQA)
 
 from src import constants              # noqa: E402
+from src import durability             # noqa: E402
 from src import environment            # noqa: E402
 from src.runner import HotPotQARun     # noqa: E402
 from src.utils import Utils            # noqa: E402
@@ -167,7 +168,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-questions", type=int, default=5)
     ap.add_argument("--out", default=os.path.join(REPO, "docs", "INVARIANT_REPORT.md"))
-    ap.add_argument("--artifacts", default="/tmp/specmem/invariant")
+    ap.add_argument("--artifacts",
+                    default=os.path.join(
+                        os.environ.get("SPEC_RUNS_DIR",
+                                       os.path.expanduser(
+                                           "~/specmem-data/runs")),
+                        "invariant"))
     ap.add_argument("--retrieval-backend", default=None,
                     choices=["live", "title_exact", "bm25"],
                     help="override constants.retrieval_backend for this run")
@@ -183,6 +189,11 @@ def main():
     # therefore scoped to the live backend rather than dropped.
     if constants.retrieval_backend == "live" and os.environ.get("WIKI_CACHE") != "1":
         sys.exit("refusing to run: WIKI_CACHE=1 is required (handoff 4.4)")
+
+    durability.require_durable_outputs(
+        artifacts=args.artifacts, report=args.out,
+        trajectories=constants.run_output_root)
+    durability.warn_if_outside_spec_base(artifacts=args.artifacts)
 
     os.makedirs(args.artifacts, exist_ok=True)
     idxs = pilot_idxs(args.n_questions)

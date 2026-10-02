@@ -455,3 +455,85 @@ BM25, `(?u)\w+` tokenizer, English stopwords, Snowball stemmer: 1.30 GiB, 3.6 mi
 
 Carried forward unchanged: §6 obs-identity, judge-contract source, `sim_obs` semantics for
 non-search steps, the two residual contamination channels.
+
+---
+
+## 14. 2026-10-02 — the second pod recycle took all Paper B data; durability made mechanical
+
+### What happened
+
+The pod recycled at 02:13 UTC. `/tmp/specmem` was wiped, and with it **every Paper B output**:
+both 25-question pilot corpora (cache-on and cache-off, both backends), the probe and diagnosis
+JSONs, the invariant-gate artifacts, and the 100-question scale-up that `PAPERB_PILOT_REPORT.md` §6
+recorded as "running". A `find` over `$HOME` and `/tmp` returns **zero** Paper B artifacts.
+
+This is the second loss of the project and the first one that was *predicted in writing*:
+`PAPERB_PILOT_REPORT.md` §8 listed those paths as "on the overlay, NOT durable". The label was
+correct and changed nothing. Note what did and did not survive, because it is the whole argument:
+the frozen corpus (7.7 GB) was on JuiceFS and is **intact**; the 100 MB of jsonl that the science
+actually depends on was on the overlay and is **gone**.
+
+### What was changed, so that it cannot recur
+
+1. **Two roots, named and separated** (`scripts/env.sh`). `$SPEC_BASE` = `$HOME/specmem-data`
+   (JuiceFS, persistent) holds **every output**: `$SPEC_RUNS_DIR`, `$LOG_DIR`, `$JUDGE_CACHE_DIR`,
+   `$WIKI_CACHE_DIR`, the corpus, the embedding weights. `$SPEC_SCRATCH` = `/tmp/specmem`
+   (overlay, ephemeral) holds **only** read-only inputs and rebuildable tooling: conda envs, the
+   56 GB weight ladder, XDG dirs, the raw KILT download. `SPEC_BASE` previously *was* `/tmp/specmem`,
+   which is why every default inherited the fault.
+
+2. **A guard that fails closed** (`hotpotqa/src/durability.py`, 23 tests). Imported by every entry
+   script and called before any compute. Aborts if an output path is under `/tmp`, `/dev/shm`,
+   `/var/tmp`, `/run`, or on a mount `findmnt -T` reports as `tmpfs`/`overlay`. Shell entry scripts
+   call the same module via `spec_require_durable`, run with the **system** `python3` so it works on
+   a freshly recycled pod before `$PIPELINE_PY` exists. `tests/test_durability.py` asserts that the
+   exact paths of the lost run would now refuse to start.
+
+3. **A checkpoint step** (`scripts/checkpoint.sh`). Copies every `.jsonl`/`.json`/`.md` under
+   `$SPEC_RUNS_DIR` below 50 MB into `results/<run_id>/`, commits, pushes; lists anything larger with
+   its size rather than skipping it silently. **Every task now ends by running it.** Persistence and
+   git are not redundant: JuiceFS stops the recycle (this loss), only `push` stops the
+   host-goes-away (the 2026-09 loss), and `$SPEC_BASE` is one quota on one node.
+
+4. **Output paths moved out of the CWD.** `runner.recalc_base_traj_path` and
+   `LoggingWrapper` wrote to `./run_metrics/` and `./trajs/` relative to the working directory —
+   durable only by accident, and repo-polluting. Both now root at `constants.run_output_root`
+   (`$SPEC_RUNS_DIR`). `score_criteria.py`'s judge cache moved off `hotpotqa/cache/judge`, and
+   `run_invariant.py`'s `--artifacts` and the two determinism probes no longer hardcode `/tmp`.
+
+Docs: `WAYS_OF_WORKING.md` §2a (the binding rules), `ENV_PREP.md` (the layout), `CLAUDE.md` §4a
+(what was lost). Offline suite: **138 pass** (115 pre-existing + 23 new).
+
+### Two defects found while doing it
+
+- `LoggingWrapper.__init__` called `os.makedirs("trajs")` literally while writing to `self.folder`,
+  so any non-default folder failed. Fixed.
+- `run_paperb_scaleup.sh` passed a `...stats.json` *file* path as `analyze_paperb.py`'s `--out`,
+  which is a **directory**, and then tested it with `[ -s ]` — which succeeds on a directory. A
+  failed stage 3 would have looked complete to the next resume. Fixed, and the serving-config record
+  is now `serving.json` inside a run directory instead of a loose `.txt` the sweep would never see.
+
+### Status of the Paper B stages
+
+Collection pilot, replay pilot and the scale-up all have **no stored data** and must be re-run.
+The criterion battery was never scored on real data at all (see below). Nothing was re-run in this
+session: the task was explicitly scoped to fixing durability first.
+
+### The "Step 5 audit" — no criterion metric was ever computed
+
+Checked because a pilot criterion metric computed before go/no-go would need a prereg amendment.
+It does not: **no precision, recall, AUROC or criterion-vs-replay-label agreement was computed,
+printed or written anywhere.**
+
+- The Step 5 audit (`105a7bd`) is `scripts/replay_audit.py`, run on `collect_pairs.py` output for
+  25 questions per backend. `summarize()` computes **only** the prereg's replay labels
+  (S1/S2/S3/harmful/delayed), pair counts, the nondeterminism rate and the go/no-go table. It
+  imports `src.gates` solely for `parse_action` and `load_pairs`.
+- Every criterion metric lives in `scripts/analyze_paperb.py` (stage 3, `precision_wrt`,
+  `recall_wrt`, `auroc_of`), which consumes `criteria_scores.jsonl` from `score_criteria.py`.
+  Neither was ever run: `PAPERB_PILOT_REPORT.md` §7 says so, stage 3 produced nothing, and
+  `hotpotqa/cache/judge/` — created 2026-09-29 — is **empty**, so not one judge or embedding call
+  was ever made.
+
+**No amendment was added to `PREREG_PAPER_B.md`.** The condition for one did not occur, and
+recording a non-event in a frozen pre-registration would itself be a defect.

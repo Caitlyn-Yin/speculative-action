@@ -21,7 +21,7 @@ Usage (from hotpotqa/, servers up per scripts/serve_local.sh):
 
     RETRIEVAL_BACKEND=title_exact SPEC_ACTIONS_FROM=speculator \
     CAPTURE_SPEC_LOGPROBS=1 $PIPELINE_PY ../scripts/collect_pairs.py \
-        --n-questions 25 --out /tmp/specmem/paperb/title_exact
+        --n-questions 25 --out $SPEC_RUNS_DIR/pilot25_title_exact
 """
 
 import argparse
@@ -40,6 +40,7 @@ os.chdir(HOTPOTQA)
 sys.path.insert(0, HOTPOTQA)
 
 from src import constants              # noqa: E402
+from src import durability             # noqa: E402
 from src import paperb                 # noqa: E402
 from src.runner import HotPotQARun     # noqa: E402
 
@@ -90,6 +91,13 @@ def main(argv=None):
     constants.capture_spec_logprobs = not args.no_logprobs
 
     run_label = args.run or f"pilot-{constants.retrieval_backend}"
+
+    # Durability gate: refuse to collect anything we cannot keep. Checked before
+    # the servers are touched, so a misconfigured --out costs no GPU time.
+    durability.require_durable_outputs(
+        out=args.out, trajectories=constants.run_output_root)
+    durability.warn_if_outside_spec_base(out=args.out)
+
     os.makedirs(args.out, exist_ok=True)
     traj_path = os.path.join(args.out, "trajectories.jsonl")
     pairs_path = os.path.join(args.out, "pairs_raw.jsonl")

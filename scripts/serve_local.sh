@@ -15,6 +15,12 @@ source "$HERE/env.sh"
 
 WHICH="${1:-both}"
 
+# Server logs are an output (they carry the serving config a run was collected
+# under, which Amendment 1 turns on). Refuse to start if they would be ephemeral.
+if [ "$WHICH" != "stop" ]; then
+  spec_require_durable "$LOG_DIR" || exit 1
+fi
+
 stop_servers() {
   pkill -f "vllm.entrypoints.openai.api_server.*--port $ACTOR_PORT" 2>/dev/null
   pkill -f "vllm.entrypoints.openai.api_server.*--port $SPEC_PORT" 2>/dev/null

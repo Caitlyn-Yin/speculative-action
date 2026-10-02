@@ -71,6 +71,22 @@ prompts_folder = "./prompts/"
 prompt_file = "prompts_naive.json"
 agent_role = "Question Answering Agent"
 
+# --------------------------------------------------------------------------
+# Where run OUTPUTS go.
+#
+# Upstream wrote trajectories to "./run_metrics/..." and "./trajs/", i.e.
+# relative to the CWD, which meant the working tree. That is durable here only
+# by accident (the repo is on JuiceFS) and it pollutes `git status` with
+# per-run directories. Outputs now default under $SPEC_RUNS_DIR, which
+# scripts/env.sh points at persistent storage and scripts/checkpoint.sh sweeps
+# into git.
+#
+# Falling back to "." when the variable is unset keeps `pytest` and ad-hoc
+# invocations working without sourcing env.sh; the durability guard
+# (src/durability.py) is what stops that fallback from landing on /tmp.
+# --------------------------------------------------------------------------
+run_output_root = os.environ.get("SPEC_RUNS_DIR", ".")
+
 random_seed = 248
 num = 7405
 n_steps_to_run = 8

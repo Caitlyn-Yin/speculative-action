@@ -37,6 +37,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hotpotqa"))
 
+from src import durability  # noqa: E402
 from src.local_wiki import (  # noqa: E402
     CHUNK_PAGES, PAGES_FILE, SQLITE_FILE, LEADS_FILE, BM25_DIR, MANIFEST_FILE,
     kilt_paragraphs_to_page, lead_paragraph, norm_key, open_pages_db,
@@ -439,6 +440,14 @@ def main():
     for var in ("WIKI_DATA_DIR", "WIKI_RAW_DIR", "WIKI_KS_URL"):
         if var not in os.environ:
             raise SystemExit(f"{var} unset -- `source scripts/env.sh` first")
+
+    # The built corpus is the one output here, and it costs a 34.8 GiB download
+    # plus ~27 min of CPU to rebuild -- hence persistent. $WIKI_RAW_DIR is
+    # deliberately NOT guarded: the raw download is scratch by design, needed
+    # only while building.
+    durability.require_durable_outputs(
+        wiki_data_dir=os.environ["WIKI_DATA_DIR"])
+
     os.makedirs(os.environ["WIKI_DATA_DIR"], exist_ok=True)
 
     man = load_manifest(os.environ["WIKI_DATA_DIR"])

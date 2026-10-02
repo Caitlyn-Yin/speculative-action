@@ -20,7 +20,7 @@ divergence, the prompts character by character.
 
 Usage (from hotpotqa/):
     RETRIEVAL_BACKEND=title_exact $PIPELINE_PY ../scripts/diag_nondeterminism.py \
-        --collected /tmp/specmem/paperb/pilot25_title_exact --idx 5619 6904
+        --collected $SPEC_RUNS_DIR/pilot25_title_exact --idx 5619 6904
 """
 
 import argparse
@@ -35,6 +35,7 @@ os.chdir(HOTPOTQA)
 sys.path.insert(0, HOTPOTQA)
 
 from src import constants              # noqa: E402
+from src import durability             # noqa: E402
 from src import paperb                 # noqa: E402
 from src.runner import HotPotQARun     # noqa: E402
 
@@ -96,6 +97,9 @@ def main(argv=None):
     ap.add_argument("--out", default=None)
     args = ap.parse_args(argv)
 
+    durability.require_durable_outputs(
+        out=args.out, trajectories=constants.run_output_root)
+
     cm_path = os.path.join(args.collected, "collect_manifest.json")
     cfg = {}
     if os.path.exists(cm_path):
@@ -120,7 +124,7 @@ def main(argv=None):
                          to_print_output=False)
     rec = Recorder(runner.llm)
     runner.llm = rec
-    runner.base_traj_path = "/tmp/specmem/paperb/diag_logs"
+    runner.base_traj_path = os.path.join(constants.run_output_root, "diag_logs")
 
     report = {"backend": constants.retrieval_backend,
               "actor": constants.actor_model_name,

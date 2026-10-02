@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# P2 - download the actor + speculator ladder to the overlay (never $HOME/JuiceFS).
+# P2 - download the actor + speculator ladder to $HF_HOME on the overlay.
+#
 #   bash scripts/download_ladder.sh
+#
+# 56 GB of read-only model weights. These go to $SPEC_SCRATCH deliberately and
+# must NEVER go to $SPEC_BASE: the JuiceFS quota is 64 GB total with ~8 GB free.
+# A pod recycle loses them and this script puts them back; ENV_PREP.md pins the
+# five config.json sha256 hashes so a re-download is verifiable.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/env.sh"

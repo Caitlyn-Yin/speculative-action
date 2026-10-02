@@ -13,10 +13,12 @@ and produces byte-identical scores.
 Usage (from ``hotpotqa/``, with the servers up -- see ``scripts/serve_local.sh``):
 
     $PIPELINE_PY ../scripts/score_criteria.py \
-        --pairs pairs.jsonl --out runs/phaseB/criteria_scores.jsonl
+        --pairs $SPEC_RUNS_DIR/pilot25_title_exact/pairs.jsonl \
+        --out $SPEC_RUNS_DIR/pilot25_title_exact/criteria_scores.jsonl
 
     # deterministic criteria only, no server, no weights:
-    python3 ../scripts/score_criteria.py --pairs pairs.jsonl --out /tmp/s.jsonl \
+    python3 ../scripts/score_criteria.py --pairs pairs.jsonl \
+        --out $SPEC_RUNS_DIR/scratch/criteria_scores.jsonl \
         --no-judge --no-embedder
 
     # the same-family circularity check for criteria 6-8:
@@ -34,7 +36,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 HOTPOTQA = os.path.join(os.path.dirname(HERE), "hotpotqa")
 sys.path.insert(0, HOTPOTQA)
 
-from src import backends, gates  # noqa: E402
+from src import backends, durability, gates  # noqa: E402
+
+#: Judge + embedding caches. Append-only and keyed by request content, so they
+#: are simultaneously a cache and the record of what the judge was asked --
+#: an output. The old default put them in the working tree
+#: (hotpotqa/cache/judge); $JUDGE_CACHE_DIR from scripts/env.sh puts them on
+#: persistent storage alongside the run they belong to.
+DEFAULT_CACHE_DIR = os.environ.get(
+    "JUDGE_CACHE_DIR",
+    os.path.join(os.environ.get("SPEC_BASE",
+                                os.path.expanduser("~/specmem-data")),
+                 "cache", "judge"))
 
 
 def git_version() -> str:
@@ -55,7 +68,7 @@ def main(argv=None):
     ap.add_argument("--pairs", required=True)
     ap.add_argument("--out", required=True,
                     help="criteria_scores.jsonl (appended to, never rewritten)")
-    ap.add_argument("--cache-dir", default=os.path.join(HOTPOTQA, "cache", "judge"))
+    ap.add_argument("--cache-dir", default=DEFAULT_CACHE_DIR)
     ap.add_argument("--judge-model", default="Qwen/Qwen3-8B")
     ap.add_argument("--judge-url", default="http://127.0.0.1:8000/v1")
     ap.add_argument("--judge-alt-model", default=None,
@@ -78,6 +91,12 @@ def main(argv=None):
         unknown = [n for n in args.only if n not in gates.CRITERIA]
         if unknown:
             ap.error(f"unknown criteria: {unknown}")
+
+    # The judge cache is the expensive artifact here: it is what makes a re-score
+    # byte-identical without re-querying the judge. Losing it to a recycle means
+    # every score has to be recomputed, so it is guarded like any other output.
+    durability.require_durable_outputs(out=args.out, cache_dir=args.cache_dir)
+    durability.warn_if_outside_spec_base(out=args.out, cache_dir=args.cache_dir)
 
     os.makedirs(args.cache_dir, exist_ok=True)
     caches = {}

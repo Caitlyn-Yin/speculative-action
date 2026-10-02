@@ -36,6 +36,7 @@ sys.path.insert(0, HOTPOTQA)
 os.chdir(HOTPOTQA)
 
 from src import constants                       # noqa: E402
+from src import durability                      # noqa: E402
 from src.runner import HotPotQARun              # noqa: E402
 from src.utils import Utils                     # noqa: E402
 from src.prompts import PromptTemplates         # noqa: E402
@@ -85,6 +86,9 @@ def main():
     ap.add_argument("--seed", type=int, default=constants.random_seed)
     ap.add_argument("--n-steps", type=int, default=constants.n_steps_to_run)
     args = ap.parse_args()
+
+    durability.require_durable_outputs(
+        queries=OUT_DIR, trajectories=constants.run_output_root)
 
     os.makedirs(OUT_DIR, exist_ok=True)
     constants.retrieval_backend = "live"

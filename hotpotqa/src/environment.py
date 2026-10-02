@@ -29,7 +29,15 @@ def clean_str(p):
 # re-runnable across processes.
 # --------------------------------------------------------------------------
 WIKI_CACHE_ENABLED = os.environ.get("WIKI_CACHE", "0") == "1"
-WIKI_CACHE_DIR = os.environ.get("WIKI_CACHE_DIR", "/tmp/specmem/wiki_cache")
+# Persistent by default: a cache hit/miss count is the evidence that decides
+# whether a gate verdict is confounded (docs/INVARIANT_REPORT.md), so losing the
+# cache to a pod recycle silently invalidates the comparison. scripts/env.sh
+# sets WIKI_CACHE_DIR under $SPEC_BASE; this fallback mirrors it.
+WIKI_CACHE_DIR = os.environ.get(
+    "WIKI_CACHE_DIR",
+    os.path.join(os.environ.get("SPEC_BASE",
+                                os.path.expanduser("~/specmem-data")),
+                 "cache", "wiki"))
 WIKI_CACHE_STATS = {"hits": 0, "misses": 0}
 _WIKI_CACHE_MEM = {}
 

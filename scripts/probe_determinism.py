@@ -18,7 +18,7 @@ Run it against a server started with and without `--enable-prefix-caching` /
 
 Usage (from hotpotqa/):
     RETRIEVAL_BACKEND=title_exact $PIPELINE_PY ../scripts/probe_determinism.py \
-        --collected /tmp/specmem/paperb/pilot25_title_exact \
+        --collected $SPEC_RUNS_DIR/pilot25_title_exact \
         --idx 5619 --step 4 --repeats 10
 """
 
@@ -35,6 +35,7 @@ os.chdir(HOTPOTQA)
 sys.path.insert(0, HOTPOTQA)
 
 from src import constants              # noqa: E402
+from src import durability             # noqa: E402
 from src import paperb                 # noqa: E402
 from src.prompts import PromptTemplates  # noqa: E402
 from src.runner import HotPotQARun     # noqa: E402
@@ -74,6 +75,9 @@ def main(argv=None):
     ap.add_argument("--out", default=None)
     args = ap.parse_args(argv)
 
+    durability.require_durable_outputs(
+        out=args.out, trajectories=constants.run_output_root)
+
     cfg = {}
     cm = os.path.join(args.collected, "collect_manifest.json")
     if os.path.exists(cm):
@@ -95,7 +99,7 @@ def main(argv=None):
                          guess_model_name=constants.spec_model_name,
                          to_print_output=False)
     real_llm = runner.llm
-    runner.base_traj_path = "/tmp/specmem/paperb/probe_logs"
+    runner.base_traj_path = os.path.join(constants.run_output_root, "probe_logs")
 
     report = {"label": args.label, "backend": constants.retrieval_backend,
               "actor": constants.actor_model_name, "repeats": args.repeats,

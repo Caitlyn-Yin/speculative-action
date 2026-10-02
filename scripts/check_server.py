@@ -24,6 +24,7 @@ HOTPOTQA_DIR = os.path.join(os.path.dirname(HERE), "hotpotqa")
 sys.path.insert(0, HOTPOTQA_DIR)
 
 from src import constants                      # noqa: E402
+from src import durability                     # noqa: E402
 from src.llm_client import LLMClient           # noqa: E402
 
 PROMPT = "Answer with exactly one word: what is the capital of France?"
@@ -87,6 +88,12 @@ def main():
     ap.add_argument("--port", type=int)
     ap.add_argument("--model")
     args = ap.parse_args()
+
+    # This script writes nothing itself, but it is the preflight that gates a
+    # run, so it fails here rather than letting the run discover it later:
+    # $LOG_DIR is where serve_local.sh puts the server logs.
+    if os.environ.get("LOG_DIR"):
+        durability.require_durable_outputs(log_dir=os.environ["LOG_DIR"])
 
     roles = []
     if args.all:
