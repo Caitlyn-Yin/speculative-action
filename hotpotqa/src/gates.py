@@ -53,7 +53,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 # recorded contract: the audit sweeps them, it does not invent new ones.
 # ---------------------------------------------------------------------------
 
-#: normalized Levenshtein *distance* grid for `edit_distance_dsp`; ours (DSP
+#: normalized Levenshtein *distance* grid for `edit_distance`; ours (DSP
 #: publishes no distance and no threshold -- see the criterion docstring).
 EDIT_DISTANCE_GRID: Tuple[float, ...] = (0.1, 0.2, 0.3, 0.4, 0.5)
 
@@ -118,6 +118,83 @@ there these they this those through to too under until up ve very was wasn we
 were weren what when where which while who whom why will with won would wouldn
 you your yours yourself yourselves
 """.split())
+
+#: Alternative refusal/uncertainty pattern list for criterion 11, registered as
+#: the ``refusal_minimal`` variant.  Where ``REFUSAL_PATTERNS`` above is ours
+#: (16 entries, of which the appendix names 2), this is the *only* list strictly
+#: recoverable from SpecHop App. D.4: its two published examples and nothing
+#: else.  It is the informative alternative precisely because it is a subset --
+#: comparing the two bounds how much of criterion 11's rejection behaviour comes
+#: from our 14 additions rather than from the source.
+REFUSAL_PATTERNS_MINIMAL: Tuple[str, ...] = (
+    "I don't know",
+    "information unavailable",
+)
+
+#: NLTK's English stopword list, verbatim from `nltk.corpus.stopwords
+#: .words("english")` under nltk 3.10.3 (198 entries, sorted;
+#: sha256 of the space-joined sorted list:
+#: 97f4fd27ecb1ef242e68e83c16b1f7a903d78a42eb719f6c1e7f40d313e97443).
+#: Frozen as a literal so the criterion stays deterministic and offline --
+#: nltk is not a dependency of the pipeline env and its corpus download is
+#: a network call we must not make mid-audit.
+STOPWORDS_NLTK_RAW: Tuple[str, ...] = tuple("""
+    a about above after again against ain all am an and any are aren
+    aren't as at be because been before being below between both but by
+    can couldn couldn't d did didn didn't do does doesn doesn't doing don
+    don't down during each few for from further had hadn hadn't has hasn
+    hasn't have haven haven't having he he'd he'll he's her here hers
+    herself him himself his how i i'd i'll i'm i've if in into is isn
+    isn't it it'd it'll it's its itself just ll m ma me mightn mightn't
+    more most mustn mustn't my myself needn needn't no nor not now o of
+    off on once only or other our ours ourselves out over own re s same
+    shan shan't she she'd she'll she's should should've shouldn shouldn't
+    so some such t than that that'll the their theirs them themselves then
+    there these they they'd they'll they're they've this those through to
+    too under until up ve very was wasn wasn't we we'd we'll we're we've
+    were weren weren't what when where which while who whom why will with
+    won won't wouldn wouldn't y you you'd you'll you're you've your yours
+    yourself yourselves
+""".split())
+
+#: scikit-learn's ENGLISH_STOP_WORDS, verbatim from
+#: `sklearn.feature_extraction.text.ENGLISH_STOP_WORDS` under sklearn 1.7.2
+#: (318 entries, sorted; sha256 of the space-joined sorted list:
+#: e570e9b41eab43e963c44d1d8b7ad441d084fa84f1104e01c9e8b41ad43feb89).
+#: This is the Glasgow IR list; sklearn's own docs call it a known-poor
+#: general-purpose list, which is exactly why it is useful as a bound.
+STOPWORDS_SKLEARN_RAW: Tuple[str, ...] = tuple("""
+    a about above across after afterwards again against all almost alone
+    along already also although always am among amongst amoungst amount an
+    and another any anyhow anyone anything anyway anywhere are around as
+    at back be became because become becomes becoming been before
+    beforehand behind being below beside besides between beyond bill both
+    bottom but by call can cannot cant co con could couldnt cry de
+    describe detail do done down due during each eg eight either eleven
+    else elsewhere empty enough etc even ever every everyone everything
+    everywhere except few fifteen fifty fill find fire first five for
+    former formerly forty found four from front full further get give go
+    had has hasnt have he hence her here hereafter hereby herein hereupon
+    hers herself him himself his how however hundred i ie if in inc indeed
+    interest into is it its itself keep last latter latterly least less
+    ltd made many may me meanwhile might mill mine more moreover most
+    mostly move much must my myself name namely neither never nevertheless
+    next nine no nobody none noone nor not nothing now nowhere of off
+    often on once one only onto or other others otherwise our ours
+    ourselves out over own part per perhaps please put rather re same see
+    seem seemed seeming seems serious several she should show side since
+    sincere six sixty so some somehow someone something sometime sometimes
+    somewhere still such system take ten than that the their them
+    themselves then thence there thereafter thereby therefore therein
+    thereupon these they thick thin third this those though three through
+    throughout thru thus to together too top toward towards twelve twenty
+    two un under until up upon us very via was we well were what whatever
+    when whence whenever where whereafter whereas whereby wherein
+    whereupon wherever whether which while whither who whoever whole whom
+    whose why will with within without would yet you your yours yourself
+    yourselves
+""".split())
+
 
 #: Articles stripped by our normalizer (criterion 2).  Ours.
 LEADING_ARTICLES: Tuple[str, ...] = ("the ", "a ", "an ")
@@ -214,6 +291,13 @@ class CriterionResult:
     flags: Dict[str, bool] = field(default_factory=dict)
     na_reason: Optional[str] = None
     detail: Dict[str, Any] = field(default_factory=dict)
+    #: Named alternative parameterizations of the SAME criterion, scored on the
+    #: same pair in the same pass.  Each value is
+    #: ``{"binary"|"score", "decisions", "detail"}``.  Variants exist so a
+    #: sensitivity analysis is possible without re-querying any judge, and so
+    #: that the set of alternatives is fixed in the registry BEFORE the audit
+    #: rather than chosen after seeing which one looks better.
+    variants: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if v not in (None, {}, [])} \
@@ -231,6 +315,11 @@ class Criterion:
     requires: Tuple[str, ...] = ()  # "embedder" | "judge" | "spec_tokens" | "spec_obs" | "real_obs"
     faithful: bool = True           # False = we knowingly deviate from the source
     notes: str = ""
+    #: Names of the alternative parameterizations this criterion reports under
+    #: ``CriterionResult.variants``.  Declared here so ``registry_table()`` --
+    #: and therefore ``criteria_manifest.json`` and docs/CRITERIA.md -- is the
+    #: pre-audit record of which variants exist.
+    variants: Tuple[str, ...] = ()
 
     @property
     def doc(self) -> str:
@@ -246,6 +335,7 @@ class Criterion:
             "requires": list(self.requires),
             "faithful_to_source": self.faithful,
             "notes": self.notes,
+            "variants": list(self.variants),
             "docstring": self.doc,
         }
 
@@ -256,7 +346,8 @@ _ORDER: List[str] = []
 
 def register(name: str, *, level: str, output: str, source: str,
              thresholds: Sequence[float] = (), requires: Sequence[str] = (),
-             faithful: bool = True, notes: str = ""):
+             faithful: bool = True, notes: str = "",
+             variants: Sequence[str] = ()):
     """Register a criterion.  Enforces the docstring contract at import time."""
 
     def deco(fn):
@@ -275,7 +366,7 @@ def register(name: str, *, level: str, output: str, source: str,
         CRITERIA[name] = Criterion(
             name=name, level=level, output=output, source=source, fn=fn,
             thresholds=tuple(thresholds), requires=tuple(requires),
-            faithful=faithful, notes=notes)
+            faithful=faithful, notes=notes, variants=tuple(variants))
         _ORDER.append(name)
         return fn
 
@@ -318,7 +409,7 @@ class Context:
             "timestamp_for_sufficient_context": self.timestamp_for_sufficient_context,
             "code_version": self.code_version,
             "grids": {
-                "edit_distance_dsp": list(EDIT_DISTANCE_GRID),
+                "edit_distance": list(EDIT_DISTANCE_GRID),
                 "embed": list(EMBED_GRID),
                 "verbal_confidence": list(VERBAL_CONF_GRID),
                 "logprob_margin": list(LOGPROB_MARGIN_GRID),
@@ -395,8 +486,52 @@ def tokens(s: str) -> List[str]:
     return norm_text(s).split()
 
 
-def content_tokens(s: str) -> List[str]:
-    return [t for t in tokens(s) if t not in STOPWORDS]
+def content_tokens(s: str, stopwords: frozenset = None) -> List[str]:
+    return [t for t in tokens(s)
+            if t not in (STOPWORDS if stopwords is None else stopwords)]
+
+
+def normalize_stopword_list(words: Sequence[str]) -> frozenset:
+    """Project a published stopword list onto *our* token space.
+
+    Necessary, not cosmetic. ``content_tokens`` filters tokens produced by
+    ``tokens(norm_text(...))``, which strips punctuation -- so NLTK's
+    apostrophe entries (``"aren't"``, ``"he's"``, ``"should've"``: 56 of its
+    198) could never match a token as published, and the list would silently
+    behave as a 142-word list with 56 dead entries. Normalizing each entry the
+    same way the text is normalized, and splitting it into tokens, is what makes
+    the comparison between lists mean what it says.
+
+    Note the consequence, which is recorded rather than hidden: this *adds*
+    short fragments (``aren't`` -> ``aren``, ``t``), so the normalized NLTK set
+    is not a subset of the published one. Our own ``STOPWORDS`` literal was
+    already written in this normalized space (it contains ``aren``, ``don``,
+    ``t``, ``ve``), which is why it needs no projection.
+    """
+    out: set = set()
+    for w in words:
+        out.update(tokens(norm_text(w)))
+    return frozenset(out)
+
+
+#: The two published alternatives, projected onto our token space.  Registered
+#: as criterion 11's ``stopwords_nltk`` / ``stopwords_sklearn`` variants.
+STOPWORDS_NLTK: frozenset = normalize_stopword_list(STOPWORDS_NLTK_RAW)
+STOPWORDS_SKLEARN: frozenset = normalize_stopword_list(STOPWORDS_SKLEARN_RAW)
+
+#: Named stopword lists for criterion 11.  ``ours`` is the primary (the one
+#: SpecHop's appendix does not publish); the other two are the variants.
+STOPWORD_LISTS: Dict[str, frozenset] = {
+    "ours": STOPWORDS,
+    "nltk": STOPWORDS_NLTK,
+    "sklearn": STOPWORDS_SKLEARN,
+}
+
+#: Named refusal-pattern lists for criterion 11.
+REFUSAL_LISTS: Dict[str, Tuple[str, ...]] = {
+    "ours": REFUSAL_PATTERNS,
+    "minimal": REFUSAL_PATTERNS_MINIMAL,
+}
 
 
 def levenshtein(a: str, b: str) -> int:
@@ -653,18 +788,23 @@ def battery(pair: Pair, ctx: Context) -> CriterionResult:
 
 
 # ===========================================================================
-# 4. edit_distance_dsp
+# 4. edit_distance
 # ===========================================================================
 
-@register("edit_distance_dsp", level="call", output="score",
-          source="DSP (Dynamic Speculative Agent Planning), arXiv:2509.01920; "
-                 "released matcher: github.com/guanyilin428/"
-                 "Dynamic-Speculative-Planning, OpenAGI/openagi_utils.py:37-39",
+@register("edit_distance", level="call", output="score",
+          source="DualSpec-attributed (arXiv:2603.07416 Section 6.1, which "
+                 "characterizes DSP as 'minimum edit distance'); ABSENT from "
+                 "DSP arXiv:2509.01920 and from its released code "
+                 "(github.com/guanyilin428/Dynamic-Speculative-Planning, "
+                 "OpenAGI/openagi_utils.py:37-39, which is `s == t`)",
           thresholds=EDIT_DISTANCE_GRID, faithful=False,
-          notes="DSP's released matcher is exact string equality, NOT an edit "
-                "distance; the distance and its grid are ours")
-def edit_distance_dsp(pair: Pair, ctx: Context) -> CriterionResult:
-    """Normalized Levenshtein distance on the argument string, DSP-attributed.
+          notes="NOT DSP's criterion. DSP's released matcher is exact string "
+                "equality (see criterion exact_dsp); the edit distance is a "
+                "third-party characterization and its grid is ours. Renamed "
+                "from edit_distance_dsp 2026-10-02 because the _dsp suffix "
+                "asserted an attribution the source does not support.")
+def edit_distance(pair: Pair, ctx: Context) -> CriterionResult:
+    """Normalized Levenshtein distance on the argument string, DualSpec-attributed.
 
     **The attribution does not survive contact with the source.**  DSP's paper
     never defines its acceptance test beyond "whenever divergence occurs, where
@@ -681,8 +821,15 @@ def edit_distance_dsp(pair: Pair, ctx: Context) -> CriterionResult:
     accepting "a draft only if it matches the base action (minimum edit
     distance)".  Since no distance or threshold is recoverable from DSP, we
     follow the fallback: normalized Levenshtein over the argument string with
-    the grid {0.1 .. 0.5}.  ``detail["dsp_exact_equal"]`` records the faithful
-    DSP predicate (raw ``==``) alongside the score.
+    the grid {0.1 .. 0.5}, and we **do not call it DSP's criterion**.  DSP's
+    actual predicate is registered separately as ``exact_dsp``;
+    ``detail["dsp_exact_equal"]`` keeps it per-pair here too so a row is
+    self-contained.
+
+    Naming: this criterion was called ``edit_distance_dsp`` until 2026-10-02.
+    The suffix claimed an attribution the source does not support, so it was
+    dropped; the published variant table in docs/CRITERIA.md records the
+    rename.
 
     Score is a **distance**: smaller is more similar, so a threshold ``t``
     accepts when ``score <= t``.
@@ -706,12 +853,63 @@ def edit_distance_dsp(pair: Pair, ctx: Context) -> CriterionResult:
     rt, ra = parse_action(pair.real_action)
     dist = normalized_levenshtein(norm_text(sa), norm_text(ra))
     return CriterionResult(
-        name="edit_distance_dsp", level="call", output="score", score=dist,
+        name="edit_distance", level="call", output="score", score=dist,
         decisions=_grid_decisions(dist, EDIT_DISTANCE_GRID, "le"),
         detail={"dsp_exact_equal": pair.spec_action == pair.real_action,
                 "same_tool": st == rt,
                 "raw_edit_distance": levenshtein(norm_text(sa), norm_text(ra)),
                 "score_is": "distance (accept when <= threshold)"})
+
+
+# ===========================================================================
+# 4b. exact_dsp -- DSP's ACTUAL predicate, kept as its own criterion
+# ===========================================================================
+
+@register("exact_dsp", level="call", output="binary",
+          source="DSP (Dynamic Speculative Agent Planning), arXiv:2509.01920; "
+                 "released matcher github.com/guanyilin428/"
+                 "Dynamic-Speculative-Planning, OpenAGI/openagi_utils.py:37-39: "
+                 "`def judge_to_be_true(s, t): return s == t`",
+          notes="Identically False on the Paper B population by construction "
+                "(the population filter is lower(spec) != lower(real)); kept "
+                "because the attribution belongs to a criterion that exists, "
+                "not to edit_distance.")
+def exact_dsp(pair: Pair, ctx: Context) -> CriterionResult:
+    """DSP's released acceptance predicate, byte-exact ``s == t``.
+
+    Split out from ``edit_distance`` on 2026-10-02. The two had been conflated
+    under the name ``edit_distance_dsp``, which attributed a distance to a paper
+    that implements equality. Keeping DSP's real predicate as a first-class
+    criterion is what makes the attribution in ``edit_distance`` honest: the
+    comparison is between *our* fallback and DSP's actual rule, not between our
+    fallback and a straw man.
+
+    **This criterion is identically ``False`` on every audited pair, and that is
+    expected, not a bug.** The prereg's population is
+    ``lower(spec_j) != lower(real_i)``, so two actions that differ only in case
+    are already excluded, and anything still in population differs as raw
+    bytes. Its value is therefore attributional and as a population invariant:
+    a ``True`` here would mean the population filter is broken, which is why it
+    is scored on every pair rather than asserted once.
+
+    Parameters verified from the source:
+      * the predicate is ``s == t`` -- byte-exact, no normalization, no
+        threshold (openagi_utils.py:37-39, repo default branch, fetched
+        2026-09-29);
+      * it is applied to the action strings, and DSP defines no other
+        acceptance test (paper Section 3; whole released ``util.py`` /
+        ``openagi_utils.py`` checked).
+
+    Parameters chosen by us:
+      * nothing. The comparison is the source's, on the pair's raw
+        ``spec_action`` / ``real_action`` strings as recorded.
+    """
+    equal = pair.spec_action == pair.real_action
+    return CriterionResult(
+        name="exact_dsp", level="call", output="binary", binary=equal,
+        detail={"predicate": "spec_action == real_action (byte-exact)",
+                "expected_constant_false_on_population": True,
+                "population_filter": "lower(spec) != lower(real)"})
 
 
 # ===========================================================================
@@ -1177,7 +1375,9 @@ def spec_confidence(pair: Pair, ctx: Context) -> CriterionResult:
                  "whose predicted observation is byte-identical to o_t\")",
           requires=("spec_obs", "real_obs"), faithful=False,
           notes="primary output is normalized equality (ours); AOSpec's byte "
-                "identity is recorded alongside it")
+                "identity is the byte_identity variant and is equally "
+                "reportable -- neither is a fallback for the other",
+          variants=("byte_identity", "normalized"))
 def obs_equal(pair: Pair, ctx: Context) -> CriterionResult:
     """Observation equality between the executed ``obs(spec_j)`` and ``obs(real_i)``.
 
@@ -1195,9 +1395,21 @@ def obs_equal(pair: Pair, ctx: Context) -> CriterionResult:
         identity (§4.2);
       * AOSpec applies no normalization before the comparison (ibid.).
 
+    Both readings are registered as **named variants**, scored on every pair:
+
+      * ``byte_identity`` -- AOSpec-faithful, ``spec_obs == real_obs``;
+      * ``normalized``    -- ours, ``norm_text`` applied to both sides.
+
+    ``binary`` stays the normalized verdict so the column keeps its meaning
+    across the pre-loss record, but the variants are what should be reported
+    side by side. Registering both before the audit is the point: which of the
+    two is "the" obs criterion is a live ruling (``CLAUDE.md`` section 6,
+    obs-identity), and that ruling must not be settled by whichever number
+    turns out nicer.
+
     Parameters chosen by us:
-      * making the normalized comparison primary and the byte comparison
-        secondary -- a deliberate deviation, flagged as ``faithful=False``;
+      * making the normalized comparison the primary ``binary`` -- a deliberate
+        deviation, flagged as ``faithful=False``;
       * the normalizer: ``norm_text`` (lowercase, diacritics, punctuation,
         whitespace).
     """
@@ -1209,14 +1421,26 @@ def obs_equal(pair: Pair, ctx: Context) -> CriterionResult:
     return CriterionResult(name="obs_equal", level="obs", output="binary",
                            binary=norm_eq,
                            detail={"byte_identical": byte_eq,
-                                   "normalized_equal": norm_eq})
+                                   "normalized_equal": norm_eq},
+                           variants={
+                               "byte_identity": {
+                                   "binary": byte_eq,
+                                   "detail": {"faithful_to": "AOSpec 2608.00881 "
+                                                             "section 4.2"}},
+                               "normalized": {
+                                   "binary": norm_eq,
+                                   "detail": {"normalizer": "norm_text"}},
+                           })
 
 
 # ===========================================================================
 # 11. spechop_rules
 # ===========================================================================
 
-def spechop_verify(candidate: str, target: str) -> Tuple[bool, Dict[str, Any]]:
+def spechop_verify(candidate: str, target: str,
+                   stopwords: frozenset = None,
+                   refusal_patterns: Sequence[str] = None,
+                   ) -> Tuple[bool, Dict[str, Any]]:
     """SpecHop's deterministic rule verifier (App. D.4), constants verified.
 
     Pipeline, in the appendix's order:
@@ -1228,11 +1452,20 @@ def spechop_verify(candidate: str, target: str) -> Tuple[bool, Dict[str, Any]]:
     4. accept on a direct substring match, or -- after stopword removal --
        ``>= 72%`` token coverage, or Jaccard ``>= 0.55``;
     5. a target under 5 characters requires a perfect token match instead.
+
+    ``stopwords`` and ``refusal_patterns`` are the two inputs the appendix does
+    **not** publish, so they are parameters rather than constants: criterion 11
+    registers the alternatives as named variants (see ``STOPWORD_LISTS`` and
+    ``REFUSAL_LISTS``). Defaults are ours, i.e. the primary scoring.
     """
+    if stopwords is None:
+        stopwords = STOPWORDS
+    if refusal_patterns is None:
+        refusal_patterns = REFUSAL_PATTERNS
     nc, nt = norm_text(candidate), norm_text(target)
     info: Dict[str, Any] = {"target_norm_len": len(nt)}
 
-    for pat in REFUSAL_PATTERNS:
+    for pat in refusal_patterns:
         if norm_text(pat) in nc:
             info["refusal_pattern"] = pat
             return False, info
@@ -1257,7 +1490,7 @@ def spechop_verify(candidate: str, target: str) -> Tuple[bool, Dict[str, Any]]:
         info["accept"] = True
         return True, info
 
-    ct, cc = content_tokens(nt), content_tokens(nc)
+    ct, cc = (content_tokens(nt, stopwords), content_tokens(nc, stopwords))
     set_t, set_c = set(ct), set(cc)
     coverage = (len(set_t & set_c) / len(set_t)) if set_t else 0.0
     union = set_t | set_c
@@ -1273,7 +1506,12 @@ def spechop_verify(candidate: str, target: str) -> Tuple[bool, Dict[str, Any]]:
           source="SpecHop, arXiv:2605.21965 App. D.4 (\"Deterministic "
                  "Rule-Based Verifier (V) Implementation\"); §4.1 for the "
                  "normalize / exact-match / token-set-Jaccard summary",
-          requires=("spec_obs", "real_obs"))
+          requires=("spec_obs", "real_obs"),
+          variants=("stopwords_nltk", "stopwords_sklearn", "refusal_minimal"),
+          notes="The four numeric constants are the appendix's; the stopword "
+                "list and the refusal-pattern list are NOT published, so both "
+                "are registered with named alternatives. The variants bound "
+                "how much of this criterion's behaviour is ours.")
 def spechop_rules(pair: Pair, ctx: Context) -> CriterionResult:
     """SpecHop's rule verifier between the executed ``obs(spec_j)`` and ``obs(real_i)``.
 
@@ -1313,13 +1551,41 @@ def spechop_rules(pair: Pair, ctx: Context) -> CriterionResult:
       * Jaccard computed over stopword-filtered token *sets*;
       * "under 5 characters" measured on the normalized target;
       * tokenization: whitespace split after normalization.
+
+    Registered variants, all scored in the same pass (deterministic, no judge
+    call, so the sensitivity analysis is free):
+
+      * ``stopwords_nltk``    -- ``STOPWORDS_NLTK``, NLTK's published English
+        list, projected onto our token space by ``normalize_stopword_list``;
+      * ``stopwords_sklearn`` -- ``STOPWORDS_SKLEARN``, scikit-learn's
+        ``ENGLISH_STOP_WORDS`` (the Glasgow IR list), same projection;
+      * ``refusal_minimal``   -- ``REFUSAL_PATTERNS_MINIMAL``, only the two
+        patterns App. D.4 actually names.
+
+    Each variant changes exactly one unpublished input and holds the four
+    published constants fixed, so a disagreement between the primary and a
+    variant localizes to the input we had to invent. They are registered now,
+    before the audit, so the choice among them cannot be made after seeing the
+    labels.
     """
     na = _require_executed_obs(pair)
     if na:
         return _na("spechop_rules", na)
     ok, info = spechop_verify(pair.spec_obs, pair.real_obs)
+
+    variants: Dict[str, Dict[str, Any]] = {}
+    for vname, kwargs in (
+        ("stopwords_nltk", {"stopwords": STOPWORDS_NLTK}),
+        ("stopwords_sklearn", {"stopwords": STOPWORDS_SKLEARN}),
+        ("refusal_minimal", {"refusal_patterns": REFUSAL_PATTERNS_MINIMAL}),
+    ):
+        v_ok, v_info = spechop_verify(pair.spec_obs, pair.real_obs, **kwargs)
+        variants[vname] = {"binary": v_ok,
+                           "detail": v_info,
+                           "agrees_with_primary": v_ok == ok}
+
     return CriterionResult(name="spechop_rules", level="obs", output="binary",
-                           binary=ok, detail=info)
+                           binary=ok, detail=info, variants=variants)
 
 
 # ===========================================================================

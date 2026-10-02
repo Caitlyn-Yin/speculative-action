@@ -51,7 +51,7 @@ PRIMARY_THRESHOLD = {
     "exact_sa": None,
     "normalized": None,
     "battery": None,
-    "edit_distance_dsp": 0.3,     # distance: accept when <= threshold
+    "edit_distance": 0.3,     # distance: accept when <= threshold
     "embed_call": 0.80,           # SpecBox tau_c
     "judge_v2_verbal": 0.50,
     "judge_v2_logprob": 0.0,
@@ -63,7 +63,7 @@ PRIMARY_THRESHOLD = {
     "sufficient_context": None,
 }
 #: The one criterion whose score is a distance, so acceptance is <=.
-LOWER_IS_ACCEPT = {"edit_distance_dsp"}
+LOWER_IS_ACCEPT = {"edit_distance"}
 
 
 # ---------------------------------------------------------------------------

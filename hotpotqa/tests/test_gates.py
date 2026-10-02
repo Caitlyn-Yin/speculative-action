@@ -30,11 +30,21 @@ from src.gates import Context, Pair  # noqa: E402
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "fixtures", "pairs_synthetic.jsonl")
 
+# Registration order.  `exact_dsp` sits right after `edit_distance` because it
+# is the other half of criterion 4: the distance is DualSpec's characterization,
+# the equality is DSP's actual released predicate (2026-10-02 split).
 EXPECTED_NAMES = [
-    "exact_sa", "normalized", "battery", "edit_distance_dsp", "embed_call",
-    "judge_v2_verbal", "judge_v2_logprob", "dualspec_critic", "spec_confidence",
-    "obs_equal", "spechop_rules", "embed_obs", "sufficient_context",
+    "exact_sa", "normalized", "battery", "edit_distance", "exact_dsp",
+    "embed_call", "judge_v2_verbal", "judge_v2_logprob", "dualspec_critic",
+    "spec_confidence", "obs_equal", "spechop_rules", "embed_obs",
+    "sufficient_context",
 ]
+
+#: Variants registered before the audit (docs/CRITERIA.md section 9).
+EXPECTED_VARIANTS = {
+    "obs_equal": ("byte_identity", "normalized"),
+    "spechop_rules": ("stopwords_nltk", "stopwords_sklearn", "refusal_minimal"),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -109,9 +119,107 @@ def run(name, pair_id, ctx=None):
 # registry / contract
 # ---------------------------------------------------------------------------
 
-def test_registry_has_all_thirteen_in_order():
+def test_registry_has_all_fourteen_in_order():
+    # 13 audited criteria + exact_dsp, which is criterion 4's other half.
     assert list(gates.CRITERIA) == EXPECTED_NAMES, list(gates.CRITERIA)
-    assert len(gates.registry_table()) == 13
+    assert len(gates.registry_table()) == 14
+
+
+def test_registered_variants_are_exactly_the_pre_audit_set():
+    """The variant set is a pre-registration, so it is pinned by a test.
+
+    Adding a variant after seeing the labels would be a way to pick the
+    flattering parameterization; this test makes that show up as a diff.
+    """
+    declared = {c["name"]: tuple(c["variants"])
+                for c in gates.registry_table() if c["variants"]}
+    assert declared == EXPECTED_VARIANTS, declared
+
+
+def test_declared_variants_are_actually_returned():
+    ctx = Context(embedder=StubEmbedder(),
+                  judge=StubJudge(default_reply="Verdict: Yes\nConfidence: 75"))
+    pair = PAIRS["T11-obs-byte-identical"]
+    for name, expected in EXPECTED_VARIANTS.items():
+        res = gates.CRITERIA[name].fn(pair, ctx).to_dict()
+        assert set(res.get("variants", {})) == set(expected), (name, res)
+
+
+def test_exact_dsp_is_dsps_released_predicate():
+    """DSP's matcher is `s == t` (openagi_utils.py:37-39), nothing more."""
+    ctx = Context()
+    for pair in PAIRS.values():
+        res = gates.CRITERIA["exact_dsp"].fn(pair, ctx)
+        assert res.binary == (pair.spec_action == pair.real_action), pair.pair_id
+    # It is faithful to its source, unlike edit_distance.
+    assert gates.CRITERIA["exact_dsp"].faithful is True
+    assert gates.CRITERIA["edit_distance"].faithful is False
+
+
+def test_exact_dsp_is_constant_false_on_in_population_pairs():
+    """A True here would mean the prereg population filter is broken.
+
+    Population is `lower(spec) != lower(real)`, so a raw-byte equality can
+    never hold. Scored on every pair as a cheap population invariant.
+    """
+    ctx = Context()
+    for pair in PAIRS.values():
+        if pair.spec_action.lower() == pair.real_action.lower():
+            continue                      # fixture pair outside the population
+        assert gates.CRITERIA["exact_dsp"].fn(pair, ctx).binary is False
+
+
+def test_stopword_variants_are_the_published_lists():
+    # Hashes recorded in gates.py next to each literal; recomputed here so a
+    # silent edit to either list fails the suite.
+    import hashlib
+    h = lambda ws: hashlib.sha256(" ".join(sorted(ws)).encode()).hexdigest()
+    assert len(gates.STOPWORDS_NLTK_RAW) == 198
+    assert h(gates.STOPWORDS_NLTK_RAW) == (
+        "97f4fd27ecb1ef242e68e83c16b1f7a903d78a42eb719f6c1e7f40d313e97443")
+    assert len(gates.STOPWORDS_SKLEARN_RAW) == 318
+    assert h(gates.STOPWORDS_SKLEARN_RAW) == (
+        "e570e9b41eab43e963c44d1d8b7ad441d084fa84f1104e01c9e8b41ad43feb89")
+
+
+def test_stopword_normalization_is_necessary_not_cosmetic():
+    """NLTK's apostrophe entries would be dead without the projection."""
+    assert "aren't" in gates.STOPWORDS_NLTK_RAW
+    # As published it could never match a token: norm_text strips punctuation.
+    assert "aren't" not in gates.STOPWORDS_NLTK
+    assert "aren" in gates.STOPWORDS_NLTK
+    # Our own literal was already written in the normalized space.
+    assert gates.normalize_stopword_list(gates.STOPWORDS) == gates.STOPWORDS
+
+
+def test_refusal_minimal_is_exactly_the_appendixs_two_examples():
+    assert gates.REFUSAL_PATTERNS_MINIMAL == ("I don't know",
+                                              "information unavailable")
+    # ...and is a subset of ours, so the variant isolates our additions.
+    assert set(gates.REFUSAL_PATTERNS_MINIMAL) <= set(gates.REFUSAL_PATTERNS)
+
+
+def test_spechop_variants_hold_the_published_constants_fixed():
+    """Each variant changes one unpublished input and nothing else."""
+    cand, tgt = "The Woolworth Building opened in 1913", "Woolworth Building 1913"
+    base, _ = gates.spechop_verify(cand, tgt)
+    for kwargs in ({"stopwords": gates.STOPWORDS_NLTK},
+                   {"stopwords": gates.STOPWORDS_SKLEARN},
+                   {"refusal_patterns": gates.REFUSAL_PATTERNS_MINIMAL}):
+        ok, info = gates.spechop_verify(cand, tgt, **kwargs)
+        assert isinstance(ok, bool)
+        # the numeric gate is the appendix's and must still be applied
+        assert info.get("target_numbers") == ["1913"], info
+
+
+def test_obs_equal_variants_split_byte_from_normalized():
+    ctx = Context()
+    pair = PAIRS["T11-obs-byte-identical"]
+    res = gates.CRITERIA["obs_equal"].fn(pair, ctx)
+    assert res.variants["byte_identity"]["binary"] is True
+    assert res.variants["normalized"]["binary"] is True
+    # primary stays the normalized verdict
+    assert res.binary == res.variants["normalized"]["binary"]
 
 
 def test_every_criterion_declares_level_output_and_source():
@@ -144,9 +252,9 @@ def test_docstrings_separate_verified_from_chosen():
 def test_levels_are_the_published_split():
     call = {n for n, c in gates.CRITERIA.items() if c.level == "call"}
     obs = {n for n, c in gates.CRITERIA.items() if c.level == "obs"}
-    assert call == {"exact_sa", "normalized", "battery", "edit_distance_dsp",
-                    "embed_call", "judge_v2_verbal", "judge_v2_logprob",
-                    "dualspec_critic", "spec_confidence"}
+    assert call == {"exact_sa", "normalized", "battery", "edit_distance",
+                    "exact_dsp", "embed_call", "judge_v2_verbal",
+                    "judge_v2_logprob", "dualspec_critic", "spec_confidence"}
     assert obs == {"obs_equal", "spechop_rules", "embed_obs",
                    "sufficient_context"}
 
@@ -280,11 +388,11 @@ def test_battery_channel_alias_does_not_double_count():
 
 
 # ---------------------------------------------------------------------------
-# 4. edit_distance_dsp
+# 4. edit_distance
 # ---------------------------------------------------------------------------
 
 def test_edit_distance_is_a_distance_and_sweeps_the_grid():
-    r = run("edit_distance_dsp", "T08-near-miss")
+    r = run("edit_distance", "T08-near-miss")
     # "british railways board" -> "british railway board": one deletion of 22
     assert r.score == 1 / 22
     assert all(r.decisions.values())                 # accepted at 0.1 .. 0.5
@@ -293,21 +401,21 @@ def test_edit_distance_is_a_distance_and_sweeps_the_grid():
 
 
 def test_edit_distance_records_the_faithful_dsp_predicate():
-    assert run("edit_distance_dsp", "T01-exact").detail["dsp_exact_equal"] is False
+    assert run("edit_distance", "T01-exact").detail["dsp_exact_equal"] is False
     same = Pair(pair_id="x", question="q", real_action="search[A]",
                 spec_action="search[A]")
-    r = gates.CRITERIA["edit_distance_dsp"].fn(same, CTX)
+    r = gates.CRITERIA["edit_distance"].fn(same, CTX)
     assert r.detail["dsp_exact_equal"] is True and r.score == 0.0
 
 
 def test_edit_distance_grid_rejects_a_far_pair():
-    r = run("edit_distance_dsp", "T04-terminal-channel")
+    r = run("edit_distance", "T04-terminal-channel")
     assert r.score > 0.5
     assert not any(r.decisions.values())
 
 
 def test_criterion_four_is_flagged_as_not_faithful():
-    c = gates.CRITERIA["edit_distance_dsp"]
+    c = gates.CRITERIA["edit_distance"]
     assert c.faithful is False
     assert "openagi_utils.py:37-39" in c.source
 

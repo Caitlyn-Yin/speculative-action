@@ -40,19 +40,26 @@ Three things this document exists to keep honest:
 | 1 | `exact_sa` | call | binary | Speculative Actions, [2510.04371] §3; released code `hotpotqa/src/metrics.py:80-86` | yes |
 | 2 | `normalized` | call | binary | ours (re-derived `NormalizedMatchGate`) | n/a |
 | 3 | `battery` | call | binary + 6 flags | ours (re-derived deterministic battery) | n/a |
-| 4 | `edit_distance_dsp` | call | score + {0.1…0.5} | DSP [2509.01920]; released matcher `OpenAGI/openagi_utils.py:37-39` | **no** |
+| 4 | `edit_distance` | call | score + {0.1…0.5} | **DualSpec [2603.07416] §6.1** (its characterization of DSP); absent from DSP [2509.01920] | **no** |
+| 4b | `exact_dsp` | call | binary | DSP [2509.01920] released matcher `OpenAGI/openagi_utils.py:37-39` (`s == t`) | yes |
 | 5 | `embed_call` | call | score + {0.80, 0.85, 0.90, 0.95} | SpecBox [2607.23933] §3.3/§4 (0.80); Cost-Aware [2606.07846] §7.4 (0.95) | yes |
 | 6 | `judge_v2_verbal` | call | score + {0.50…0.95} | ours (SE rubric v2) + H4 of the prereg | n/a |
 | 7 | `judge_v2_logprob` | call | score + {−4…4} | ours (same rubric); log-odds form from DualSpec Eq. 6 | n/a |
 | 8 | `dualspec_critic` | call | score + {−4…4} | DualSpec [2603.07416] App. A.1 (prompt, verbatim) + Eq. 6/7 | yes |
 | 9 | `spec_confidence` | call | score + {0.50, 0.70, 0.80, **0.90**, 0.95} | SPORK [2607.03333] §4.2 Eq. (2), θ = 0.90 | yes (+ our arg-span variant) |
-| 10 | `obs_equal` | obs | binary (+ byte-identity) | AOSpec [2608.00881] §4.2 | **no** (normalized is primary) |
-| 11 | `spechop_rules` | obs | binary | SpecHop [2605.21965] App. D.4 | yes |
+| 10 | `obs_equal` | obs | binary + variants `byte_identity`, `normalized` | AOSpec [2608.00881] §4.2 | **no** (normalized is the primary column) |
+| 11 | `spechop_rules` | obs | binary + variants `stopwords_nltk`, `stopwords_sklearn`, `refusal_minimal` | SpecHop [2605.21965] App. D.4 | yes (constants); lists are ours |
 | 12 | `embed_obs` | obs | score + {0.80…0.95} | thresholds as in 5; the transfer to observations is ours | partly |
 | 13 | `sufficient_context` | obs | binary | Sufficient Context [2411.06037]; prompt verbatim from `hljoren/sufficientcontext` README | yes |
 
 All nine arXiv identifiers were resolved and read on 2026-09-29; the titles are
 listed in §5. Section numbers below are from the arXiv HTML of `v1` in each case.
+
+**14 registered criteria, not 13.** The audited battery is still the 13 above;
+`exact_dsp` is criterion 4's other half, split out on 2026-10-02 so that DSP's
+actual predicate is attributed to a criterion that implements it. Named
+**variants** (§9) are alternative parameterizations of a single criterion,
+scored in the same pass and reported alongside it — they are not new criteria.
 
 ---
 
@@ -94,7 +101,7 @@ listed in §5. Section numbers below are from the arXiv HTML of `v1` in each cas
   The i−1 / ≤ i−2 boundary, the `≥ 2` count and the normalization (same as
   criterion 2) are all ours.
 
-### 4 `edit_distance_dsp` — call, score — **attribution corrected**
+### 4 `edit_distance` — call, score — **attribution corrected**
 - **Verified:** DSP's *released* acceptance predicate is exact string equality —
   `judge_to_be_true(s, t): return s == t`,
   [`OpenAGI/openagi_utils.py:37-39`](https://github.com/guanyilin428/Dynamic-Speculative-Planning/blob/main/OpenAGI/openagi_utils.py)
@@ -108,9 +115,32 @@ listed in §5. Section numbers below are from the arXiv HTML of `v1` in each cas
 - **Chosen (the documented fallback):** normalized Levenshtein over the
   `norm_text`-ed argument string, divided by the longer length; grid
   {0.1, 0.2, 0.3, 0.4, 0.5}; accept when **distance ≤ threshold** (the score is a
-  distance, not a similarity). `detail.dsp_exact_equal` records DSP's faithful
-  predicate on every pair, so the audit can report both.
+  distance, not a similarity).
+- **Attribution, stated plainly:** this criterion is **DualSpec-attributed and
+  absent from DSP's released code.** It was named `edit_distance_dsp` until
+  2026-10-02; the `_dsp` suffix asserted an attribution the source does not
+  support, so it was renamed to `edit_distance` everywhere (`gates.py`,
+  `analyze_paperb.py` thresholds, tests, this file). Any pre-rename artifact
+  carries the old key.
+- **DSP's real predicate is `exact_dsp` (4b)**, a first-class criterion rather
+  than a detail field. `detail.dsp_exact_equal` is still recorded here so a row
+  is self-contained.
 - Registered with `faithful=False`.
+
+### 4b `exact_dsp` — call, binary — **DSP's actual released predicate**
+- **Verified:** `judge_to_be_true(s, t): return s == t` — byte-exact, no
+  normalization, no threshold (`OpenAGI/openagi_utils.py:37-39`). Nothing else
+  in DSP defines acceptance.
+- **Chosen:** nothing. Applied to the pair's raw `spec_action` / `real_action`.
+- **Identically `False` on the audited population, by construction.** The
+  prereg's population is `lower(spec_j) != lower(real_i)`, so case-only
+  differences are already excluded and anything remaining differs as raw bytes.
+  It is scored on every pair anyway, as a cheap population invariant: a `True`
+  would mean the population filter is broken. It carries no discriminative
+  information and **must not** be reported as a criterion that "never accepts"
+  as though that were an empirical finding.
+- Registered with `faithful=True` — it is the one criterion in the battery whose
+  parameters are entirely the source's.
 
 ### 5 `embed_call` — call, score
 - **Verified:** 0.80 is SpecBox's `τ_c`, "the semantic similarity exceeds the
@@ -189,11 +219,15 @@ listed in §5. Section numbers below are from the arXiv HTML of `v1` in each cas
   is byte-identical to o_t" (§4.2), with **no normalization** — canonicalizing
   inconsequential fields is named there only as something that *could* improve
   acceptance.
-- **Chosen:** making normalized equality the primary output and byte identity
-  secondary (`detail.byte_identical`) — a deliberate deviation, registered with
-  `faithful=False`, because our observations are truncated Wikipedia prose where
-  a diacritic or trailing period is not a semantic difference; the normalizer is
-  `norm_text`.
+- **Chosen:** making normalized equality the primary `binary` column — a
+  deliberate deviation, registered with `faithful=False`, because our
+  observations are truncated Wikipedia prose where a diacritic or trailing
+  period is not a semantic difference; the normalizer is `norm_text`.
+- **Both readings are registered variants** (§9): `byte_identity`
+  (AOSpec-faithful) and `normalized` (ours). They are reported side by side.
+  Which one is "the" obs criterion is a **live ruling** (`CLAUDE.md` §6,
+  obs-identity) — registering both before the audit is what keeps that ruling
+  from being settled by whichever number looks better afterwards.
 
 ### 11 `spechop_rules` — obs, binary
 - **Verified (App. D.4, quoted):** normalization "lowercasing, diacritic and
@@ -218,6 +252,10 @@ listed in §5. Section numbers below are from the arXiv HTML of `v1` in each cas
   containment of every multi-digit number of the target; Jaccard over
   stopword-filtered token sets; "under 5 characters" measured on the normalized
   target; whitespace tokenization.
+- **Both unpublished inputs now have registered alternatives** (§9), so the
+  audit can bound how much of this criterion is ours:
+  `stopwords_nltk`, `stopwords_sklearn` and `refusal_minimal`. Each changes
+  exactly one input and holds the four published constants fixed.
 - Direction: candidate = `obs(spec_j)`, target = `obs(real_i)`. SpecHop's
   verifier is conservative in one direction (it must not produce false
   positives), so this is fixed, not symmetric.
@@ -329,7 +367,13 @@ Code sources: `github.com/guanyilin428/Dynamic-Speculative-Planning` (DSP),
    "exact_sa":        {"name": "...", "level": "call", "output": "binary", "binary": false, "detail": {"comparator": "upstream"}},
    "battery":         {"...": "...", "flags": {"tool_channel": false, "...": false}, "detail": {"fired": []}},
    "embed_call":      {"...": "...", "score": 0.874, "decisions": {"0.8": true, "0.85": true, "0.9": false, "0.95": false}},
-   "spechop_rules":   {"...": "...", "binary": true, "detail": {"rule": "lexical_overlap", "coverage": 0.8, "jaccard": 0.6}},
+   "exact_dsp":       {"...": "...", "binary": false, "detail": {"expected_constant_false_on_population": true}},
+   "spechop_rules":   {"...": "...", "binary": true, "detail": {"rule": "lexical_overlap", "coverage": 0.8, "jaccard": 0.6},
+                       "variants": {"stopwords_nltk": {"binary": true, "agrees_with_primary": true, "detail": {}},
+                                    "stopwords_sklearn": {"binary": false, "agrees_with_primary": false, "detail": {}},
+                                    "refusal_minimal": {"binary": true, "agrees_with_primary": true, "detail": {}}}},
+   "obs_equal":       {"...": "...", "binary": true,
+                       "variants": {"byte_identity": {"binary": false}, "normalized": {"binary": true}}},
    "sufficient_context": {"...": "...", "na_reason": "no executed observation for spec_j"}
  },
  "judge_alt": {"model_id": "...", "criteria": {"judge_v2_verbal": {}, "judge_v2_logprob": {}, "dualspec_critic": {}}}}
@@ -340,7 +384,14 @@ ground truth the criteria are scored *against*. A criterion that cannot be
 evaluated emits `na_reason` and no `binary`/`score`; it is never silently a
 reject. `criteria_manifest.json` beside it records the models and revisions, the
 threshold grids, the code version (`git rev-parse HEAD`, `-dirty` when the tree
-is), the NA counts, the cache statistics and a dump of the registry.
+is), the NA counts, the cache statistics and a dump of the registry — including
+each criterion's declared `variants`, which is what makes the registry the
+pre-audit record of the variant set (§9).
+
+`variants` appears only on criteria that declare them. A variant entry carries
+its own `binary`/`score` plus `agrees_with_primary` where applicable; the
+criterion's own `binary`/`score` remains the primary value. An NA criterion
+emits no variants — there is nothing to vary.
 
 ## 7. The fixture
 
@@ -358,22 +409,85 @@ from this fixture; those come from the re-execution audit on real data.
 ## 8. Running it
 
 ```bash
+source scripts/env.sh
 cd hotpotqa
-python3 tests/test_gates.py                    # 53/53, offline, stdlib only
-~/micromamba/envs/es/bin/python tests/test_gates.py   # also exercises upstream Metrics (needs pandas)
+$PIPELINE_PY -m pytest tests/test_gates.py -q     # offline, no server, no weights
 
 # deterministic criteria only — no server, no weights:
-python3 ../scripts/score_criteria.py --pairs pairs.jsonl \
-    --out runs/phaseB/criteria_scores.jsonl --no-judge --no-embedder
+$PIPELINE_PY ../scripts/score_criteria.py \
+    --pairs  $SPEC_RUNS_DIR/pilot25_title_exact/pairs.jsonl \
+    --out    $SPEC_RUNS_DIR/pilot25_title_exact/criteria_scores.jsonl \
+    --no-judge --no-embedder
 
-# everything (servers up per scripts/serve_local.sh; HF_HOME for bge):
-HF_HOME=$HOME/specmem-data/hf_embed $PIPELINE_PY ../scripts/score_criteria.py \
-    --pairs pairs.jsonl --out runs/phaseB/criteria_scores.jsonl \
+# everything (servers up per scripts/serve_local.sh; HF_EMBED_HOME for bge):
+HF_HOME=$HF_EMBED_HOME $PIPELINE_PY ../scripts/score_criteria.py \
+    --pairs  $SPEC_RUNS_DIR/pilot25_title_exact/pairs.jsonl \
+    --out    $SPEC_RUNS_DIR/pilot25_title_exact/criteria_scores.jsonl \
     --judge-model Qwen/Qwen3-8B --judge-url http://127.0.0.1:8000/v1 \
     --judge-alt-model NousResearch/Meta-Llama-3.1-8B-Instruct \
     --judge-alt-url http://127.0.0.1:8002/v1
 ```
 
-`pytest` is not installed in either environment on this node, so
-`tests/test_gates.py` carries its own runner; it is written in pytest style and
-will also collect normally once pytest is available.
+Outputs go under `$SPEC_RUNS_DIR` (persistent); `score_criteria.py` aborts if
+asked to write anywhere ephemeral, and its judge/embedding cache defaults to
+`$JUDGE_CACHE_DIR`. See `docs/WAYS_OF_WORKING.md` §2a.
+
+The alternate judge needs a third server on `:8002`. At `ACTOR_GPU_FRAC=0.60` +
+`SPEC_GPU_FRAC=0.25` there is not enough headroom, so the speculator must be
+stopped first — the speculator is not used during scoring.
+
+---
+
+## 9. Registered variants (fixed 2026-10-02, before any audit)
+
+A **variant** is an alternative parameterization of a single criterion, scored
+in the same pass and recorded under `criteria.<name>.variants.<variant>`. The
+set is declared in the registry (`register(..., variants=(...))`), so it reaches
+`criteria_manifest.json` and is pinned by
+`tests/test_gates.py::test_registered_variants_are_exactly_the_pre_audit_set`.
+
+**Why they are registered up front.** Every variant below exists because the
+source leaves a parameter unspecified and we had to choose one. If the choice
+were made after seeing the labels, the criterion would be fitted to the outcome
+it is supposed to be evaluated against. Fixing the set before the audit makes
+adding one later show up as a diff in a test.
+
+| Criterion | Variant | What changes | Why this alternative |
+|---|---|---|---|
+| 10 `obs_equal` | `byte_identity` | `spec_obs == real_obs` | AOSpec §4.2 verbatim — the faithful reading |
+| 10 `obs_equal` | `normalized` | `norm_text` both sides | ours; the primary `binary` column |
+| 11 `spechop_rules` | `stopwords_nltk` | `STOPWORDS_NLTK` | NLTK's published English list — the most common "standard English stopwords" referent |
+| 11 `spechop_rules` | `stopwords_sklearn` | `STOPWORDS_SKLEARN` | scikit-learn `ENGLISH_STOP_WORDS` (Glasgow IR); a deliberately different and much larger list, so it bounds the sensitivity |
+| 11 `spechop_rules` | `refusal_minimal` | `REFUSAL_PATTERNS_MINIMAL` | only the two patterns App. D.4 actually names; isolates our 14 additions |
+
+### Provenance of the two stopword lists
+
+Both are **frozen literals** in `gates.py`, not library imports: `nltk` and
+`sklearn` are not pipeline-env dependencies, NLTK's list needs a corpus download
+(a network call we must not make mid-audit), and a literal is what makes the
+criterion deterministic. They were extracted once from the real libraries and
+their hashes are asserted by the suite:
+
+| List | Source | n | sha256 of the space-joined sorted list |
+|---|---|---|---|
+| `STOPWORDS_NLTK_RAW` | `nltk.corpus.stopwords.words("english")`, nltk 3.10.3 | 198 | `97f4fd27ecb1ef242e68e83c16b1f7a903d78a42eb719f6c1e7f40d313e97443` |
+| `STOPWORDS_SKLEARN_RAW` | `sklearn.feature_extraction.text.ENGLISH_STOP_WORDS`, sklearn 1.7.2 | 318 | `e570e9b41eab43e963c44d1d8b7ad441d084fa84f1104e01c9e8b41ad43feb89` |
+
+**They are projected onto our token space before use**, by
+`normalize_stopword_list`. This is necessary, not cosmetic: `content_tokens`
+filters tokens produced by `tokens(norm_text(...))`, which strips punctuation,
+so NLTK's 56 apostrophe entries (`"aren't"`, `"he's"`, `"should've"`) could
+never match a token as published — the list would silently act as a 142-word
+list with 56 dead entries. The projection splits each entry the same way the
+text is split, which also *adds* fragments (`aren't` → `aren`, `t`), so the
+normalized set is **not** a subset of the published one. Normalized sizes: ours
+148, NLTK 153, sklearn 318. Our own literal was already written in the
+normalized space, and `normalize_stopword_list(STOPWORDS) == STOPWORDS` is
+asserted to keep it that way.
+
+### Variants are not free passes
+
+A variant disagreeing with the primary is a finding about **our** parameter
+choice, not evidence for whichever verdict is preferred. The audit reports the
+primary as the criterion's value and the variants as a sensitivity band; it does
+not select a variant per cell.
